@@ -1,4 +1,4 @@
-<!doctype html>
+!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -13,7 +13,6 @@
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
-
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
       const { useMemo, useState, useEffect } = React;
@@ -32,6 +31,7 @@
         const rows=text.replace(/\r/g,'').split('\n');
         const lines=rows.map(raw=>{ const d=raw.includes('\t')?'\t':','; return raw.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim()); });
 
+        // 1) Players table
         const playerHeaderRow=lines.findIndex(r=>(r[0]||'')==='Name'&&(r[1]||'')==='Hdcp');
         const players=[];
         if(playerHeaderRow>=0){
@@ -43,6 +43,7 @@
           }
         }
 
+        // 2) Stableford (summary) totals
         const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
         const totals={};
         if(stablefordSectionRow>=0){
@@ -54,17 +55,21 @@
           }
         }
 
+        // 3) Per-hole Stableford from detailed card:
+        // Row i:  A=name
+        // Row i+1: B='Stableford', C=Handicap, D–L=H1–H9, M=Out, N–V=H10–H18, W=In, X=Total
         const holeData={};
         const getNum = (x) => {
           const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
           return Number.isFinite(v) ? v : 0;
         };
+
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
             if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
               const st=lines[i+1]||[];
-              const front9 = st.slice(3,12).map(getNum);
-              const back9H = st.slice(13,22).map(getNum);
+              const front9 = st.slice(3,12).map(getNum);   // D..L (9 holes)
+              const back9H = st.slice(13,22).map(getNum);  // N..V (9 holes)
               const perHole = [...front9, ...back9H];
               const back9 = back9H.reduce((a,b)=>a+b,0);
               const maxHole = perHole.length ? Math.max(...perHole) : 0;
@@ -90,42 +95,23 @@
         const eclecticTotal=bestPerHole.reduce((s,v)=>s+(isFinite(v)?v:0),0);
         return {bestPerHole,eclecticTotal};
       }
-
-      function makeSupabaseClient(url,key){
-        try{
-          if(!url||!key) return null;
-          const c = supabase.createClient(url,key);
-          return c;
-        }catch(e){
-          console.warn("Supabase client failed",e);
-          return null;
-        }
-      }
+      function makeSupabaseClient(url,key){ try{ if(!url||!key) return null; return supabase.createClient(url,key);}catch(e){ console.warn("Supabase client failed",e); return null;}}
 
       function App(){
-        const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY = "sb_publishable_mTokuyCyHWPCl83L9qL0lQ_IP2TBWFt";
-
         const [players,setPlayers]=useState([]);
         const [eventName,setEventName]=useState("Den Society Meeting");
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
         const [season,setSeason]=useState({});
-        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
-        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
+        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||'');
+        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||'');
         const [client,setClient]=useState(makeSupabaseClient(supaURL,supaKEY));
         const connected=!!client;
 
-        async function saveSupa(){
-          localStorage.setItem('supa_url',supaURL.trim());
-          localStorage.setItem('supa_key',supaKEY.trim());
-          setClient(makeSupabaseClient(supaURL.trim(),supaKEY.trim()));
-        }
-
+        async function saveSupa(){ localStorage.setItem('supa_url',supaURL.trim()); localStorage.setItem('supa_key',supaKEY.trim()); setClient(makeSupabaseClient(supaURL.trim(),supaKEY.trim())); }
         async function fetchSeason(){
           if(!client) return;
-          const {data,error}=await client
-            .from('season_standings')
-            .select('*');
+          const {data,error}=await client.from('season_standings')
+            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
           if(error){console.warn('Supabase fetch error',error);return;}
           const map={};
           (data||[]).forEach(r=>{
@@ -136,8 +122,7 @@
               bestEventPoints:r.best_event_points??0,
               bestHolePoints:r.best_hole_points??0,
               eclecticTotal:r.eclectic_total??0,
-              bestPerHole:Array.isArray(r.best_per_hole)?r.best_per_hole:
-                (typeof r.best_per_hole==='string'?JSON.parse(r.best_per_hole||'[]'):[])
+              bestPerHole:Array.isArray(r.best_per_hole)?r.best_per_hole:(typeof r.best_per_hole==='string'?JSON.parse(r.best_per_hole||'[]'):[])
             };
           });
           setSeason(map);
@@ -151,6 +136,7 @@
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length){setComputed([]);return;}
+          // Tie groups by total points; each tied group gets the highest available slot points
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
@@ -181,7 +167,6 @@
             next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, bestPerHole, eclecticTotal };
           }
           setSeason(next);
-
           if(client){
             const rows=Object.values(next).map(r=>({
               name:r.name,
@@ -194,7 +179,6 @@
             }));
             const {error}=await client.from('season_standings').upsert(rows,{onConflict:'name'});
             if(error) console.warn('Supabase upsert error',error);
-            await fetchSeason();
           }
         }
 
@@ -230,8 +214,8 @@
             <div className="max-w-6xl mx-auto space-y-6">
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
                 <div>
-                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm text-neutral-600">{connected ? '✅ Supabase connected' : '❌ Supabase not configured'}</p>
+                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic (Static)</h1>
+                  <p className="text-sm text-neutral-600">{connected ? 'Supabase: configured (via Settings)' : 'Supabase: not configured — local only'}</p>
                 </div>
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
@@ -246,21 +230,131 @@
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm block mb-1">Supabase URL</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="https://xxxx.supabase.co" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
                   </div>
                   <div>
                     <label className="text-sm block mb-1">Supabase anon (publishable) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="sb_..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
                   </div>
                 </div>
                 <div className="mt-3 flex gap-2">
                   <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
+                  <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
                   <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Tip: Leave blank if you don't want cloud storage. You can still import and export locally.</p>
+              </section>
+
+              {/* Import + Event table */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <div className="flex justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Event Players</h2>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import CSV
+                      <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
+                    </label>
+                    <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                  </div>
+                </div>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
+                    </thead>
+                    <tbody>
+                      {computed.map((r,i)=> (
+                        <tr key={i} className="border-b">
+                          <td>{r.position}</td>
+                          <td>{r.name}</td>
+                          <td>{Math.round(r.startExact)}</td>
+                          <td>{r.points}</td>
+                          <td>{r.back9}</td>
+                          <td>{r.leaguePoints}</td>
+                          <td>{r.nextPlaying}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot (e.g., joint 2nd both get 17; next is 4th).</p>
+              </section>
+
+              {/* League standings */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <div className="flex justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Season Standings</h2>
+                  <div className="flex gap-2">
+                    <button onClick={exportStandings} className="px-3 py-2 rounded-xl bg-black text-white">Export Standings</button>
+                    <button onClick={resetSeason} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Reset Season (local)</button>
+                  </div>
+                </div>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th>Rank</th><th>Name</th><th>Events</th><th>Total Points</th><th>Best Event</th><th>Best Hole</th><th>Eclectic Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.values(season).sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name)).map((r,i)=> (
+                        <tr key={r.name} className="border-b">
+                          <td>{i+1}</td>
+                          <td>{r.name}</td>
+                          <td>{r.events}</td>
+                          <td>{r.totalPoints}</td>
+                          <td>{r.bestEventPoints ?? 0}</td>
+                          <td>{r.bestHolePoints ?? 0}</td>
+                          <td>{r.eclecticTotal ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </section>
 
-              {/* Everything else identical */}
-              <!-- Rest of your HTML unchanged -->
+              {/* Eclectic leaderboard */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <div className="flex justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
+                  <div className="flex gap-2">
+                    <button onClick={exportEclecticCSV} className="px-3 py-2 rounded-xl bg-black text-white">Export Eclectic CSV</button>
+                  </div>
+                </div>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th>Rank</th><th>Name</th><th>Eclectic Total</th>
+                        {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.values(season)
+                        .sort((a,b)=>( (b.eclecticTotal??0) - (a.eclecticTotal??0) ) || a.name.localeCompare(b.name))
+                        .map((r,i)=>(
+                        <tr key={r.name} className="border-b">
+                          <td>{i+1}</td>
+                          <td>{r.name}</td>
+                          <td>{r.eclecticTotal ?? 0}</td>
+                          {(r.bestPerHole??Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
+              </section>
+
+              {/* How-to */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <h2 className="text-lg font-semibold mb-2">How to Use</h2>
+                <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
+                  <li>Optional: enter your Supabase URL & anon key in <strong>Settings</strong> and click <strong>Save & Connect</strong>.</li>
+                  <li>Click <strong>Import CSV</strong> and choose your Squabbit export.</li>
+                  <li>Click <strong>Add Event → Season</strong> to update the league & eclectic.</li>
+                  <li>Use the Export buttons for CSVs.</li>
+                </ol>
+              </section>
             </div>
           </div>
         );
