@@ -98,36 +98,55 @@
       function makeSupabaseClient(url,key){ try{ if(!url||!key) return null; return supabase.createClient(url,key);}catch(e){ console.warn("Supabase client failed",e); return null;}}
 
       function App(){
-        const [players,setPlayers]=useState([]);
-        const [eventName,setEventName]=useState("Den Society Meeting");
-        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
-        const [season,setSeason]=useState({});
-        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||'');
-        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||'');
-        const [client,setClient]=useState(makeSupabaseClient(supaURL,supaKEY));
-        const connected=!!client;
+  const [players, setPlayers] = useState([]);
+  const [eventName, setEventName] = useState("Den Society Meeting");
+  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0,10));
+  const [season, setSeason] = useState({});
 
-        async function saveSupa(){ localStorage.setItem('supa_url',supaURL.trim()); localStorage.setItem('supa_key',supaKEY.trim()); setClient(makeSupabaseClient(supaURL.trim(),supaKEY.trim())); }
-        async function fetchSeason(){
-          if(!client) return;
-          const {data,error}=await client.from('season_standings')
-            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(error){console.warn('Supabase fetch error',error);return;}
-          const map={};
-          (data||[]).forEach(r=>{
-            map[r.name]={
-              name:r.name,
-              totalPoints:r.total_points||0,
-              events:r.events||0,
-              bestEventPoints:r.best_event_points??0,
-              bestHolePoints:r.best_hole_points??0,
-              eclecticTotal:r.eclectic_total??0,
-              bestPerHole:Array.isArray(r.best_per_hole)?r.best_per_hole:(typeof r.best_per_hole==='string'?JSON.parse(r.best_per_hole||'[]'):[])
-            };
-          });
-          setSeason(map);
-        }
-        useEffect(()=>{ fetchSeason(); },[client]);
+  // ✅ Your actual Supabase details
+  const defaultURL = 'https://mqknahdfpqxrpgpxqtus.supabase.co';
+  const defaultKEY = 'sb_publishable_mTokuyCyHWPCl83L9qL0lQ_IP2TBWFt';
+
+  const [supaURL, setSupaURL] = useState(localStorage.getItem('supa_url') || defaultURL);
+  const [supaKEY, setSupaKEY] = useState(localStorage.getItem('supa_key') || defaultKEY);
+  const [client, setClient] = useState(makeSupabaseClient(supaURL.trim(), supaKEY.trim()));
+  const connected = !!client;
+
+  async function saveSupa() {
+    localStorage.setItem('supa_url', supaURL.trim());
+    localStorage.setItem('supa_key', supaKEY.trim());
+    setClient(makeSupabaseClient(supaURL.trim(), supaKEY.trim()));
+  }
+
+  async function fetchSeason() {
+    if (!client) return;
+    const { data, error } = await client
+      .from('season_standings')
+      .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+    if (error) {
+      console.warn('Supabase fetch error', error);
+      return;
+    }
+    const map = {};
+    (data || []).forEach(r => {
+      map[r.name] = {
+        name: r.name,
+        totalPoints: r.total_points || 0,
+        events: r.events || 0,
+        bestEventPoints: r.best_event_points ?? 0,
+        bestHolePoints: r.best_hole_points ?? 0,
+        eclecticTotal: r.eclectic_total ?? 0,
+        bestPerHole: Array.isArray(r.best_per_hole)
+          ? r.best_per_hole
+          : (typeof r.best_per_hole === 'string' ? JSON.parse(r.best_per_hole || '[]') : [])
+      };
+    });
+    setSeason(map);
+  }
+
+  // Load season automatically when connected
+  useEffect(() => { if (client) fetchSeason(); }, [client]);
+
 
         async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
 
