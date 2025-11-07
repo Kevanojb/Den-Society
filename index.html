@@ -95,7 +95,28 @@
         const eclecticTotal=bestPerHole.reduce((s,v)=>s+(isFinite(v)?v:0),0);
         return {bestPerHole,eclecticTotal};
       }
-      function makeSupabaseClient(url,key){ try{ if(!url||!key) return null; return supabase.createClient(url,key);}catch(e){ console.warn("Supabase client failed",e); return null;}}
+     function makeSupabaseClient(url,key){
+  try{
+    if(!url || !key){
+      console.warn("[SUPA] Missing url or key", {url, keyPrefix: (key||"").slice(0,12)});
+      return null;
+    }
+    // unpkg UMD exposes global `supabase`
+    if(typeof supabase === "undefined"){
+      console.error("[SUPA] supabase-js not loaded (script tag missing?)");
+      return null;
+    }
+    const client = supabase.createClient(url.trim(), key.trim());
+    // expose for debugging
+    window.__SUPA = { url: url.trim(), keyPrefix: key.trim().slice(0, 12), client };
+    console.log("[SUPA] Client created", window.__SUPA);
+    return client;
+  }catch(e){
+    console.error("[SUPA] createClient failed:", e);
+    return null;
+  }
+}
+
 
       function App(){
   const [players, setPlayers] = useState([]);
