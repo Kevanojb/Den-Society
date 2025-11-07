@@ -12,7 +12,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-    <!-- ✅ Supabase UMD (must load before your app code) -->
+    <!-- Supabase UMD -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 
     <!-- Babel for JSX-in-browser -->
@@ -58,10 +58,7 @@
         return {nextExact:bounded,nextPlaying:nextPlay};
       }
 
-      // ---------- robust Squabbit + Simple CSV parser ----------
-      // Works with:
-      //  A) Simple headers: Name,Hdcp,Stableford,Back9,H1..H18
-      //  B) Squabbit export: name row followed by row with B="Stableford" and per-hole across that row
+      // ---------- robust parser (prevents duplicates & wrong totals) ----------
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n').filter(Boolean);
         const splitRow = raw => (raw.includes('\t') ? raw.split('\t') : raw.split(','))
@@ -83,10 +80,12 @@
         if (hasSimple){
           const iH1 = idx('h1'), iH18 = idx('h18');
           const out = [];
+          const seen = new Set(); // de-dupe by name
           for (let i=1;i<lines.length;i++){
             const r = lines[i];
             const nm = r[idx('name')];
-            if (!nm) continue;
+            if (!nm || seen.has(nm)) continue;
+            seen.add(nm);
             const perHole = [];
             for (let c=iH1;c<=iH18;c++) perHole.push(nnum(r[c]));
             out.push({
@@ -103,27 +102,53 @@
         }
 
         // --- PATH B: Squabbit export
-        // 1) Players list
+        // 1) Players list (de-dupe by name)
         const players = [];
+        const seenNames = new Set();
         const playerHeaderRow = lines.findIndex(r => (r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
         if (playerHeaderRow >= 0){
           for (let i=playerHeaderRow+1;i<lines.length;i++){
             const name=(lines[i][0]||'').trim();
             const hcap=nnum(lines[i][1]);
             if (!name) break;
-            if (!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
+            if (!seenNames.has(name) && !Number.isNaN(hcap)) {
+              seenNames.add(name);
+              players.push({name,handicap:hcap,gender:'M'});
+            }
           }
         }
 
-        // 2) Totals
+        // 2) Choose the "real" Stableford totals section (avoid the tiny-number table)
+        const stablefordIdxs = lines
+          .map((r,ix)=> ({ix, row:r}))
+          .filter(x => (x.row[0]||'').trim()==='Stableford');
+
+        let totalsStart = -1;
+        for (const cand of stablefordIdxs){
+          const hdr = lines[cand.ix+1] || [];
+          const looksLikeHeader = (hdr[0]||'').toLowerCase()==='player';
+          // Heuristic: in the next ~20 rows, most totals should be >= 15
+          let bigCount = 0, rowsChecked = 0;
+          for (let i=cand.ix+2; i<Math.min(lines.length, cand.ix+22); i++){
+            const nm = (lines[i][0]||'').trim();
+            if (!nm) break;
+            const val = nnum(lines[i][1]);
+            if (val>=15) bigCount++;
+            rowsChecked++;
+          }
+          if (looksLikeHeader && rowsChecked>=5 && bigCount/rowsChecked >= 0.6){
+            totalsStart = cand.ix;
+            break;
+          }
+        }
+
         const totals = {};
-        const stablefordSectionRow = lines.findIndex(r => (r[0]||'')==='Stableford');
-        if (stablefordSectionRow>=0){
-          for (let i=stablefordSectionRow+2;i<lines.length;i++){
+        if (totalsStart>=0){
+          for (let i=totalsStart+2;i<lines.length;i++){
             const name=(lines[i][0]||'').trim();
             if (!name) break;
             const total = nnum(lines[i][1]);
-            if (!Number.isNaN(total)) totals[name]=total;
+            if (name && Number.isFinite(total)) totals[name]=total;
           }
         }
 
@@ -134,34 +159,49 @@
             const rowA = lines[i]||[];
             const rowB = lines[i+1]||[];
             if ((rowA[0]||'').trim() === p.name && (rowB[1]||'').trim() === 'Stableford'){
-              // Preferred column windows: D..L (H1..H9), N..V (H10..H18), with Out at M and In at W
-              const front9 = rowB.slice(3,12).map(nnum);   // 9 cells
-              const back9H = rowB.slice(13,22).map(nnum);  // 9 cells
+              // preferred windows: D..L (H1..H9), N..V (H10..H18)
+              const front9 = rowB.slice(3,12).map(nnum);
+              const back9H = rowB.slice(13,22).map(nnum);
+
               let perHole = [];
-              if (front9.length===9 && back9H.length===9 && (front9.some(v=>v>0) || back9H.some(v=>v>0))){
+              if (front9.length===9 && back9H.length===9 &&
+                  (front9.some(v=>v>0) || back9H.some(v=>v>0))) {
                 perHole = [...front9, ...back9H];
               } else {
-                // Fallback: first 18 numeric cells on that row
+                // fallback: first 18 numeric cells, but only if there are at least 12 non-zeros
                 const numeric = rowB.map(nnum).filter(v => Number.isFinite(v));
-                perHole = numeric.slice(0,18);
+                const candidate = numeric.slice(0,18);
+                const nz = candidate.filter(v=>v>0).length;
+                if (candidate.length===18 && nz>=12) perHole = candidate;
               }
+
+              // sanity check back9
               const back9 = perHole.slice(9).reduce((a,b)=>a+b,0);
-              const maxHole = perHole.length ? Math.max(...perHole) : 0;
-              holeData[p.name] = { perHole, back9, maxHole };
+              if (perHole.length===18 && back9<=27 && back9>=0){
+                holeData[p.name] = { perHole, back9, maxHole: Math.max(...perHole) };
+              }
               break;
             }
           }
         }
 
-        return players.map(p => ({
-          name: p.name,
-          gender: p.gender,
-          handicap: p.handicap,
-          points: totals[p.name] || 0,
-          back9: holeData[p.name]?.back9 || 0,
-          perHole: holeData[p.name]?.perHole || [],
-          eventMaxHole: holeData[p.name]?.maxHole || 0
-        }));
+        // 4) Build final player list
+        const out = [];
+        const finalSeen = new Set();
+        for (const p of players){
+          if (finalSeen.has(p.name)) continue;
+          finalSeen.add(p.name);
+          out.push({
+            name: p.name,
+            gender: p.gender,
+            handicap: p.handicap,
+            points: totals[p.name] || 0,
+            back9: holeData[p.name]?.back9 || 0,
+            perHole: holeData[p.name]?.perHole || [],
+            eventMaxHole: holeData[p.name]?.maxHole || 0
+          });
+        }
+        return out;
       }
 
       function mergeEclectic(prev,currentPerHole){
@@ -173,7 +213,6 @@
       function makeSupabaseClient(url,key){
         try{
           if(!url||!key) return null;
-          console.log("Supabase client:", url);
           return supabase.createClient(url,key);
         }catch(e){
           console.warn("Supabase client failed", e);
@@ -189,7 +228,7 @@
         const [eventName,setEventName]=useState("Den Society Meeting");
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
 
-        // Your Supabase defaults (pre-filled so you don't have to type them every time)
+        // Your Supabase defaults
         const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY = "sb_publishable_mTokuyCyHWPCl83L9qL0lQ_IP2TBWFt";
 
@@ -291,22 +330,6 @@
           }
         }
 
-        async function seedTestRow(){
-          if(!client){ alert("Not connected"); return; }
-          const demo = {
-            name: 'Test Golfer',
-            total_points: 5,
-            events: 1,
-            best_event_points: 36,
-            best_hole_points: 4,
-            eclectic_total: 20,
-            best_per_hole: [2,1,1,2,2,1,2,1,2, 2,1,1,2,2,1,2,1,2]
-          };
-          const {error} = await client.from('season_standings').upsert([demo], { onConflict: 'name' });
-          if(error){ console.warn('Seed error', error); alert('Seed failed: '+error.message); }
-          else { await fetchSeason(); alert('Seeded. Check Season below.'); }
-        }
-
         function exportStandings(){
           const list=Object.values(season).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
           const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
@@ -321,6 +344,8 @@
           const rows=[header, ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])];
           downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
+
+        function resetSeason(){ setSeason({}); } // local reset only
 
         return (
           <div className="min-h-screen p-4 sm:p-6 md:p-8">
@@ -352,7 +377,6 @@
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
                   <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
-                  <button onClick={seedTestRow} className="px-3 py-2 rounded-xl border border-blue-300 text-blue-700">Seed test row</button>
                 </div>
                 <p className="text-xs text-neutral-500 mt-2">Publishable key is fine in browser if your table uses RLS policies.</p>
               </section>
@@ -366,6 +390,7 @@
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0]; if(f) importCSV(f);}} />
                     </label>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                    <button onClick={()=>setPlayers([])} className="px-3 py-2 rounded-xl border border-neutral-300">Clear Event</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
