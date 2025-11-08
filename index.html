@@ -8,18 +8,21 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Use jsDelivr for supabase-js (more reliable on some networks) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-
-    <style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}</style>
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+      /* Hide owner-only sections by default to avoid layout jump */
+      .owner-only{display:none;}
+      .owner-on .owner-only{display:block;}
+      .owner-on .owner-inline{display:inline;}
+    </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
-      const { useMemo, useState, useEffect } = React;
+      const { useMemo, useState, useEffect, useRef } = React;
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
       const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
@@ -101,15 +104,9 @@
       // ---------- Supabase helpers ----------
       function normalizeUrl(u){
         if(!u) return '';
-        let s = String(u).trim();
-        s = s.replace(/\/+$/,''); // drop trailing slash
+        let s = String(u).trim().replace(/\/+$/,'');
         if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
-        try{
-          const url = new URL(s);
-          return `https://${url.host}`;
-        }catch{
-          return '';
-        }
+        try{ const url = new URL(s); return `https://${url.host}`; }catch{ return ''; }
       }
       function cleanKey(k){
         if(!k) return '';
@@ -129,8 +126,6 @@
         const u = normalizeUrl(url);
         const k = cleanKey(key);
         if(!u || !k) return null;
-
-        // NEW: explicit SDK presence check with precise error
         if(!(window.supabase && window.supabase.createClient)){
           throw new Error('supabase-js SDK did not load');
         }
@@ -154,12 +149,41 @@
         return s.slice(0,showStart) + '…' + s.slice(-showEnd);
       }
 
+      // -------- Owner Mode (PIN-protected UI) --------
+      const OWNER_PIN_KEY = 'den_owner_pin';
+      function promptSetPin(){
+        const p1 = window.prompt('Set a new Owner PIN (keep it simple but not obvious)');
+        if(!p1) return null;
+        const p2 = window.prompt('Confirm Owner PIN');
+        if(p1 !== p2){ alert('PINs did not match.'); return null; }
+        localStorage.setItem(OWNER_PIN_KEY, p1);
+        return p1;
+      }
+      function promptCheckPin(){
+        const saved = localStorage.getItem(OWNER_PIN_KEY);
+        if(!saved){
+          return promptSetPin(); // first-time setup
+        }
+        const entered = window.prompt('Enter Owner PIN to toggle Owner Mode');
+        if(entered === saved) return saved;
+        alert('Incorrect PIN.');
+        return null;
+      }
+
+      // Treat these as non-player rows (from your earlier fix)
+      function isTeamLike(name){
+        if(!name) return false;
+        const n = String(name).trim();
+        return /^(team(\s*\d+)?)$/i.test(n) || /^team average$/i.test(n) || /^stableford$/i.test(n);
+      }
+
       function App(){
         const [players,setPlayers]=useState([]);
         const [eventName,setEventName]=useState("Den Society Meeting");
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
         const [season,setSeason]=useState({});
         const [statusMsg,setStatusMsg]=useState('Not connected');
+        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
 
         // Defaults (yours)
         const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
@@ -177,7 +201,6 @@
           }catch(e){
             console.warn(e);
             if(String(e?.message||'').includes('SDK did not load')){
-              // surface clear message on first paint
               setTimeout(()=>setStatusMsg('Error: supabase-js SDK failed to load'), 0);
             }
             return null;
@@ -185,6 +208,41 @@
         });
 
         const connected = statusMsg.startsWith('Connected');
+
+        // Keyboard shortcut: Ctrl+Alt+O toggles Owner Mode with PIN
+        useEffect(()=>{
+          const onKey = (e)=>{
+            if(e.ctrlKey && e.altKey && (e.key==='o' || e.key==='O')){
+              e.preventDefault();
+              const ok = promptCheckPin();
+              if(ok){
+                const next = !ownerMode;
+                setOwnerMode(next);
+                if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode');
+                document.documentElement.classList.toggle('owner-on', next);
+              }
+            }
+          };
+          window.addEventListener('keydown', onKey);
+          // apply class on initial mount
+          if(ownerMode) document.documentElement.classList.add('owner-on');
+          return ()=>window.removeEventListener('keydown', onKey);
+        }, [ownerMode]);
+
+        // Long-press title to toggle Owner Mode (mobile-friendly)
+        const pressTimer = useRef(null);
+        const startPress = ()=>{
+          pressTimer.current = setTimeout(async ()=>{
+            const ok = promptCheckPin();
+            if(ok){
+              const next = !ownerMode;
+              setOwnerMode(next);
+              if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode');
+              document.documentElement.classList.toggle('owner-on', next);
+            }
+          }, 1500); // 1.5s press
+        };
+        const cancelPress = ()=>{ if(pressTimer.current){ clearTimeout(pressTimer.current); pressTimer.current=null; } };
 
         async function saveSupa(){
           const rawU = (supaURL || '').trim();
@@ -208,7 +266,7 @@
           setClient(c);
           if(!c){
             if(statusMsg.indexOf('SDK failed to load') === -1){
-              setStatusMsg('Invalid URL or key (SDK missing or fields empty)');
+              setStatusMsg('Invalid URL or key');
             }
             return;
           }
@@ -233,6 +291,7 @@
           setStatusMsg('Connected');
           const map={};
           (data||[]).forEach(r=>{
+            if(isTeamLike(r.name)) return; // skip non-players
             const bph = Array.isArray(r.best_per_hole)
               ? r.best_per_hole
               : (typeof r.best_per_hole === 'string'
@@ -288,6 +347,7 @@
         async function addEventToSeason(){
           const next={...season};
           for(const r of computed){
+            if(isTeamLike(r.name)) continue; // skip non-players
             const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
             const {bestPerHole,eclecticTotal}=mergeEclectic(prev.bestPerHole,r.perHole||[]);
             const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
@@ -297,15 +357,17 @@
           setSeason(next);
 
           if(client){
-            const rows=Object.values(next).map(r=>({
-              name:r.name,
-              total_points: r.totalPoints|0,
-              events: r.events|0,
-              best_event_points: r.bestEventPoints|0,
-              best_hole_points: r.bestHolePoints|0,
-              eclectic_total: r.eclecticTotal|0,
-              best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
-            }));
+            const rows=Object.values(next)
+              .filter(r=>!isTeamLike(r.name))
+              .map(r=>({
+                name:r.name,
+                total_points: r.totalPoints|0,
+                events: r.events|0,
+                best_event_points: r.bestEventPoints|0,
+                best_hole_points: r.bestHolePoints|0,
+                eclectic_total: r.eclecticTotal|0,
+                best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
+              }));
             const { error } = await client.from('season_standings').upsert(rows, { onConflict:'name' });
             if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase upsert error', error); }
             else { setStatusMsg('Connected'); }
@@ -315,19 +377,25 @@
         function exportEvent(){
           const rows=[["Event",eventName,"Date",dateStr],[],
             ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-            ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
+            ...computed
+              .filter(r=>!isTeamLike(r.name))
+              .map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
           ];
           downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
         function exportStandings(){
-          const list=Object.values(season).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
+          const list=Object.values(season)
+            .filter(r=>!isTeamLike(r.name))
+            .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
           const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
             ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])
           ];
           downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
         function exportEclecticCSV(){
-          const list=Object.values(season).sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
+          const list=Object.values(season)
+            .filter(r=>!isTeamLike(r.name))
+            .sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
           const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
           const rows=[header,
             ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
@@ -341,22 +409,33 @@
           const k = (localStorage.getItem('supa_key')||'').toString();
           const sdkOk = !!(window.supabase && window.supabase.createClient);
           return (
-            <p className="text-xs text-neutral-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1 owner-only">
               Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code> · SDK: <code>{sdkOk?'loaded':'MISSING'}</code>
             </p>
           );
         }
 
         return (
-          <div className="min-h-screen p-4 sm:p-6 md:p-8">
+          <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
             <div className="max-w-6xl mx-auto space-y-6">
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
-                <div>
+                <div
+                  onMouseDown={startPress}
+                  onTouchStart={startPress}
+                  onMouseUp={cancelPress}
+                  onMouseLeave={cancelPress}
+                  onTouchEnd={cancelPress}
+                >
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm" style={{color: connected ? '#059669' : '#dc2626'}}>
+                  {/* Status text visible only in Owner Mode */}
+                  <p className="text-sm owner-only" style={{color: connected ? '#059669' : '#dc2626'}}>
                     Supabase: {statusMsg}
                   </p>
                   <DebugStatus />
+                  {/* Tiny hint for you only when owner is off (not obvious to others) */}
+                  {!ownerMode && (
+                    <span className="text-[10px] text-neutral-400 select-none"> </span>
+                  )}
                 </div>
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
@@ -365,8 +444,8 @@
                 </div>
               </header>
 
-              {/* Settings */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              {/* Settings — Owner only */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Settings</h2>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
@@ -383,7 +462,7 @@
                   <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); setStatusMsg('Not connected'); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
                   <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Tip: Serve this file via a local server if you see CORS or SDK blocked, e.g. <code>python -m http.server</code></p>
+                <p className="text-xs text-neutral-500 mt-2">Owner Mode is active. Press Ctrl+Alt+O to hide.</p>
               </section>
 
               {/* Import + Event table */}
@@ -420,7 +499,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot.</p>
               </section>
 
-              {/* League standings */}
+              {/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
@@ -437,7 +516,10 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.values(season).sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name)).map((r,i)=> (
+                      {Object.values(season)
+                        .filter(r=>!isTeamLike(r.name))
+                        .sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name))
+                        .map((r,i)=> (
                         <tr key={r.name} className="border-b">
                           <td>{i+1}</td>
                           <td>{r.name}</td>
@@ -471,6 +553,7 @@
                     </thead>
                     <tbody>
                       {Object.values(season)
+                        .filter(r=>!isTeamLike(r.name))
                         .sort((a,b)=>( (b.eclecticTotal??0) - (a.eclecticTotal??0) ) || a.name.localeCompare(b.name))
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
@@ -483,18 +566,18 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
               {/* How-to */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Enter your Supabase URL & anon key in <strong>Settings</strong> and click <strong>Save & Connect</strong>.</li>
                   <li>Click <strong>Import CSV</strong> and choose your Squabbit export.</li>
                   <li>Click <strong>Add Event → Season</strong> to update the league & eclectic.</li>
                   <li>Use the Export buttons for CSVs.</li>
                 </ol>
+                {/* Tiny owner tip area (invisible to others) */}
+                <p className="text-[11px] text-neutral-400 owner-only mt-2">Owner tip: Press Ctrl+Alt+O to toggle Owner Mode.</p>
               </section>
             </div>
           </div>
@@ -506,4 +589,3 @@
     </script>
   </body>
 </html>
-
