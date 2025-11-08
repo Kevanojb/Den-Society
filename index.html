@@ -3,589 +3,338 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Den Society — League & Eclectic</title>
+    <title>Den Society — Event Ratings (Auto Par from Squabbit)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-      /* Hide owner-only sections by default to avoid layout jump */
-      .owner-only{display:none;}
-      .owner-on .owner-only{display:block;}
-      .owner-on .owner-inline{display:inline;}
+      .owner-only{display:none}
+      .owner-on .owner-only{display:block}
+      .mono{font-variant-numeric:tabular-nums}
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
-      /* global React, ReactDOM, supabase */
-      const { useMemo, useState, useEffect, useRef } = React;
-      const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
-      const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-      const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
-      const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
+      const { useMemo, useState, useEffect } = React;
 
-      function playingCapByGender(g){ return g==="F"?36:28; }
-      function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
-      function cutPerPointOver34(h){ const r=rangeForHcap(h); return r==="0-9"?0.5:r==="10-18"?1:r==="19-28"?1:1.5; }
-      function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
-      function computeNewExactHandicap(start,g,pts,b9,w){ const startPlay=Math.round(start); let exact=start; if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} if(w) exact-=winnerBonusCut(startPlay); const max=playingCapByGender(g); const bounded=clamp(exact,0,60); const nextPlay=clamp(Math.round(bounded),0,max); return {nextExact:bounded,nextPlaying:nextPlay}; }
+      // ---------- Small utils ----------
+      const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
+      const downloadCSV = (filename, rows) => {
+        const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n");
+        const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+      };
+      const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
+      const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
+      const makeDefaultPars = () => [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+      const isTeamLike = name => /^(team(\s*\d+)?)$/i.test(name||'') || /^team average$/i.test(name||'') || /^stableford$/i.test(name||'');
+
+      // ---------- CSV parsing ----------
+      function splitSmart(raw){
+        const d = raw.includes('\t')? '\t' : ',';
+        return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
+      }
+      function asNums(arr){
+        return arr.map(x => {
+          const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
+          return Number.isFinite(v) ? v : null;
+        });
+      }
+
+      // Find "Par" rows anywhere; return best 18-hole candidate (front/back or full)
+      function detectParsFromLines(lines){
+        const candidates = [];
+        for (let i=0;i<lines.length;i++){
+          const row = lines[i];
+          // any cell exactly "Par" (case-insensitive)
+          const hasPar = row.some(c => String(c).toLowerCase() === 'par');
+          if(!hasPar) continue;
+
+          // Collect numeric cells from this row
+          const nums = asNums(row).filter(n => n!==null);
+          if (nums.length >= 18) {
+            // take first 18
+            candidates.push({ kind:'row18', score:18, arr: nums.slice(0,18) });
+            continue;
+          }
+          if (nums.length >= 8 && nums.length <= 10) {
+            // Could be a 9-hole par row (front or back); try to pair with next Par row
+            // Look ahead up to 6 rows for another Par row with ~9 numbers
+            for (let j=i+1; j<Math.min(lines.length, i+7); j++){
+              const row2 = lines[j];
+              const hasPar2 = row2.some(c => String(c).toLowerCase() === 'par');
+              if(!hasPar2) continue;
+              const nums2 = asNums(row2).filter(n=>n!==null);
+              if (nums2.length >= 8 && nums2.length <= 10) {
+                const joined = [...nums, ...nums2].slice(0,18);
+                if (joined.length === 18) {
+                  candidates.push({ kind:'row9+9', score:18, arr: joined });
+                }
+              }
+            }
+          }
+        }
+        // Heuristic: prefer any exact-18 candidate, else the first 9+9
+        const exact18 = candidates.find(c => c.arr.length===18);
+        if (exact18) return exact18.arr.map(n => Math.round(n));
+        if (candidates.length) return candidates[0].arr.map(n => Math.round(n));
+        return null;
+      }
 
       function parseSquabbitCSV(text){
-        const rows=text.replace(/\r/g,'').split('\n');
-        const lines=rows.map(raw=>{ const d=raw.includes('\t')?'\t':','; return raw.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim()); });
+        const rows = text.replace(/\r/g,'').split('\n').filter(Boolean);
+        const lines = rows.map(splitSmart);
 
-        // 1) Players table
-        const playerHeaderRow=lines.findIndex(r=>(r[0]||'')==='Name'&&(r[1]||'')==='Hdcp');
-        const players=[];
-        if(playerHeaderRow>=0){
-          for(let i=playerHeaderRow+1;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            const hcap=parseFloat((lines[i][1]||'').trim());
+        // Detect pars before anything else
+        const detectedPars = detectParsFromLines(lines);
+
+        // Players block
+        const playerHeaderRow = lines.findIndex(r=>(r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
+        const players = [];
+        if (playerHeaderRow >= 0){
+          for (let i=playerHeaderRow+1; i<lines.length; i++){
+            const name = (lines[i][0]||'').trim();
+            const hcap = parseFloat((lines[i][1]||'').trim());
             if(!name) break;
-            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
+            if(!Number.isNaN(hcap)) players.push({name, handicap:hcap, gender:'M'});
           }
         }
 
-        // 2) Stableford totals
-        const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
-        const totals={};
-        if(stablefordSectionRow>=0){
+        // Stableford summary totals
+        const stablefordSectionRow = lines.findIndex(r=>(r[0]||'')==='Stableford');
+        const totals = {};
+        if (stablefordSectionRow >= 0){
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            if(!name) break;
-            const r1=parseFloat((lines[i][1]||'').trim());
+            const name=(lines[i][0]||'').trim(); if(!name) break;
+            const r1 = parseFloat((lines[i][1]||'').trim());
             if(!Number.isNaN(r1)) totals[name]=r1;
           }
         }
 
-        // 3) Per-hole Stableford from detailed card
-        const holeData={};
-        const getNum = (x) => {
+        // Per-hole Stableford from detailed card (row i: name, row i+1 has "Stableford")
+        const holeData = {};
+        const getNum = x => {
           const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
           return Number.isFinite(v) ? v : 0;
         };
-
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
             if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
-              const st=lines[i+1]||[];
-              const front9 = st.slice(3,12).map(getNum);   // D..L
-              const back9H = st.slice(13,22).map(getNum);  // N..V
-              const perHole = [...front9, ...back9H];
-              const back9 = back9H.reduce((a,b)=>a+b,0);
-              const maxHole = perHole.length ? Math.max(...perHole) : 0;
-              holeData[p.name]={perHole,back9,maxHole};
+              const st = lines[i+1]||[];
+              const perHole = [...st.slice(3,12).map(getNum), ...st.slice(13,22).map(getNum)];
+              holeData[p.name] = { perHole };
               break;
             }
           }
         }
 
-        return players.map(p=>({
+        const outPlayers = players.map(p=>({
           name:p.name,
           gender:p.gender,
           handicap:p.handicap,
-          points:totals[p.name]||0,
-          back9:holeData[p.name]?.back9||0,
-          perHole:holeData[p.name]?.perHole||[],
-          eventMaxHole:holeData[p.name]?.maxHole||0
+          points: totals[p.name]||0,
+          perHole: holeData[p.name]?.perHole || []
         }));
+
+        return { players: outPlayers, detectedPars };
       }
 
-      function mergeEclectic(prev,currentPerHole){
-        const bestPerHole=Array.from({length:18},(_,i)=>Math.max(prev?.[i]??0,currentPerHole?.[i]??0));
-        const eclecticTotal=bestPerHole.reduce((s,v)=>s+(isFinite(v)?v:0),0);
-        return {bestPerHole,eclecticTotal};
-      }
-
-      // ---------- Supabase helpers ----------
-      function normalizeUrl(u){
-        if(!u) return '';
-        let s = String(u).trim().replace(/\/+$/,'');
-        if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
-        try{ const url = new URL(s); return `https://${url.host}`; }catch{ return ''; }
-      }
-      function cleanKey(k){
-        if(!k) return '';
-        return String(k).replace(/[^\x20-\x7E]/g,'').trim();
-      }
-      function jwtRefFromKey(k){
-        try{
-          const parts = k.split('.');
-          if(parts.length < 2) return null;
-          const b64 = parts[1].replace(/-/g,'+').replace(/_/g,'/');
-          const json = atob(b64);
-          const payload = JSON.parse(json);
-          return payload?.ref || null;
-        }catch{ return null; }
-      }
-      function makeSupabaseClient(url, key){
-        const u = normalizeUrl(url);
-        const k = cleanKey(key);
-        if(!u || !k) return null;
-        if(!(window.supabase && window.supabase.createClient)){
-          throw new Error('supabase-js SDK did not load');
+      // Per-event par-type averages (Stableford)
+      function eventParAverages(perHole, pars){
+        let sums={3:{s:0,c:0}, 4:{s:0,c:0}, 5:{s:0,c:0}};
+        for(let i=0;i<Math.min(18, perHole.length); i++){
+          const pts = Number(perHole[i])||0;
+          const par = Number(pars[i])||4;
+          if (sums[par]) { sums[par].s += pts; sums[par].c++; }
         }
-        return window.supabase.createClient(u, k, { auth: { persistSession:false }});
-      }
-      async function probe(client){
-        try{
-          const { error, status } = await client
-            .from('season_standings')
-            .select('*', { head:false })
-            .limit(1);
-          if(error) return { ok:false, status, msg:error.message };
-          return { ok:true, status:200, msg:'Connected' };
-        }catch(e){
-          return { ok:false, status:0, msg:String(e?.message||e) };
-        }
-      }
-      function mask(s, showStart=6, showEnd=4){
-        if(!s) return '';
-        if(s.length <= showStart + showEnd) return s;
-        return s.slice(0,showStart) + '…' + s.slice(-showEnd);
-      }
-
-      // -------- Owner Mode (PIN-protected UI) --------
-      const OWNER_PIN_KEY = 'den_owner_pin';
-      function promptSetPin(){
-        const p1 = window.prompt('Set a new Owner PIN (keep it simple but not obvious)');
-        if(!p1) return null;
-        const p2 = window.prompt('Confirm Owner PIN');
-        if(p1 !== p2){ alert('PINs did not match.'); return null; }
-        localStorage.setItem(OWNER_PIN_KEY, p1);
-        return p1;
-      }
-      function promptCheckPin(){
-        const saved = localStorage.getItem(OWNER_PIN_KEY);
-        if(!saved){
-          return promptSetPin(); // first-time setup
-        }
-        const entered = window.prompt('Enter Owner PIN to toggle Owner Mode');
-        if(entered === saved) return saved;
-        alert('Incorrect PIN.');
-        return null;
-      }
-
-      // Treat these as non-player rows (from your earlier fix)
-      function isTeamLike(name){
-        if(!name) return false;
-        const n = String(name).trim();
-        return /^(team(\s*\d+)?)$/i.test(n) || /^team average$/i.test(n) || /^stableford$/i.test(n);
+        const avg = t => sums[t].c ? (sums[t].s / sums[t].c) : 0;
+        return { p3: avg(3), p4: avg(4), p5: avg(5), counts:{p3:sums[3].c,p4:sums[4].c,p5:sums[5].c} };
       }
 
       function App(){
-        const [players,setPlayers]=useState([]);
-        const [eventName,setEventName]=useState("Den Society Meeting");
-        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
-        const [season,setSeason]=useState({});
-        const [statusMsg,setStatusMsg]=useState('Not connected');
-        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
+        const [ownerMode,setOwnerMode] = useState(false);
+        const [players,setPlayers] = useState([]);
+        const [autoPars,setAutoPars] = useState(null);   // detected from CSV
+        const [overridePars,setOverridePars] = useState(''); // owner edit box (optional)
 
-        // Defaults (yours)
-        const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+        const coursePars = useMemo(()=>{
+          // precedence: override if valid → detected → default
+          const fromOverride = (()=> {
+            if(!overridePars) return null;
+            try{
+              const arr = overridePars.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite);
+              return arr.length===18 ? arr : null;
+            }catch{ return null; }
+          })();
+          return fromOverride || autoPars || makeDefaultPars();
+        }, [autoPars, overridePars]);
 
-        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
-        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
+        // Owner debug: which holes are 3/4/5
+        const holeDebug = useMemo(()=>{
+          const holes={3:[],4:[],5:[]};
+          (coursePars||[]).forEach((p,i)=>{ if([3,4,5].includes(p)) holes[p].push(i+1); });
+          return holes;
+        }, [coursePars]);
 
-        const [client,setClient] = useState(()=>{
-          try{
-            return makeSupabaseClient(
-              localStorage.getItem('supa_url') || defaultURL,
-              localStorage.getItem('supa_key') || defaultKEY
-            );
-          }catch(e){
-            console.warn(e);
-            if(String(e?.message||'').includes('SDK did not load')){
-              setTimeout(()=>setStatusMsg('Error: supabase-js SDK failed to load'), 0);
-            }
-            return null;
+        async function importCSV(file){
+          const text = await file.text();
+          const parsed = parseSquabbitCSV(text);
+          setPlayers(parsed.players||[]);
+          setAutoPars(parsed.detectedPars || null);
+        }
+
+        // Ratings for THIS EVENT ONLY
+        const ratings = useMemo(()=>{
+          const out=[];
+          for(const p of players){
+            if(isTeamLike(p.name)) continue;
+            const {p3,p4,p5} = eventParAverages(p.perHole||[], coursePars);
+            out.push({
+              name: p.name,
+              p3, p4, p5,
+              r3: ratingLabel(p3), r4: ratingLabel(p4), r5: ratingLabel(p5),
+              c3: ratingColor(p3), c4: ratingColor(p4), c5: ratingColor(p5),
+              total: (p3+p4+p5)
+            });
           }
-        });
+          out.sort((a,b)=> b.total - a.total || a.name.localeCompare(b.name));
+          return out;
+        }, [players, coursePars]);
 
-        const connected = statusMsg.startsWith('Connected');
-
-        // Keyboard shortcut: Ctrl+Alt+O toggles Owner Mode with PIN
-        useEffect(()=>{
-          const onKey = (e)=>{
-            if(e.ctrlKey && e.altKey && (e.key==='o' || e.key==='O')){
-              e.preventDefault();
-              const ok = promptCheckPin();
-              if(ok){
-                const next = !ownerMode;
-                setOwnerMode(next);
-                if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode');
-                document.documentElement.classList.toggle('owner-on', next);
-              }
+        // Field average (THIS EVENT)
+        const fieldAvg = useMemo(()=>{
+          let s3=0,c3=0,s4=0,c4=0,s5=0,c5=0;
+          for(const p of players){
+            if(isTeamLike(p.name)) continue;
+            const perHole = p.perHole||[];
+            for(let i=0;i<Math.min(18, perHole.length); i++){
+              const pts = Number(perHole[i])||0;
+              const par = Number(coursePars[i])||4;
+              if(par===3){ s3+=pts; c3++; } else if(par===4){ s4+=pts; c4++; } else if(par===5){ s5+=pts; c5++; }
             }
+          }
+          const a3=c3?s3/c3:0, a4=c4?s4/c4:0, a5=c5?s5/c5:0;
+          return {
+            p3:a3, p4:a4, p5:a5,
+            r3: ratingLabel(a3), r4: ratingLabel(a4), r5: ratingLabel(a5),
+            c3: ratingColor(a3), c4: ratingColor(a4), c5: ratingColor(a5)
           };
-          window.addEventListener('keydown', onKey);
-          // apply class on initial mount
-          if(ownerMode) document.documentElement.classList.add('owner-on');
-          return ()=>window.removeEventListener('keydown', onKey);
-        }, [ownerMode]);
-
-        // Long-press title to toggle Owner Mode (mobile-friendly)
-        const pressTimer = useRef(null);
-        const startPress = ()=>{
-          pressTimer.current = setTimeout(async ()=>{
-            const ok = promptCheckPin();
-            if(ok){
-              const next = !ownerMode;
-              setOwnerMode(next);
-              if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode');
-              document.documentElement.classList.toggle('owner-on', next);
-            }
-          }, 1500); // 1.5s press
-        };
-        const cancelPress = ()=>{ if(pressTimer.current){ clearTimeout(pressTimer.current); pressTimer.current=null; } };
-
-        async function saveSupa(){
-          const rawU = (supaURL || '').trim();
-          const rawK = (supaKEY || '').trim();
-          const u = normalizeUrl(rawU || defaultURL);
-          const k = cleanKey(rawK || defaultKEY);
-
-          localStorage.setItem('supa_url', u);
-          localStorage.setItem('supa_key', k);
-
-          let c = null;
-          try{
-            c = makeSupabaseClient(u, k);
-          }catch(e){
-            setStatusMsg(
-              String(e?.message||'').includes('SDK did not load')
-                ? 'Error: supabase-js SDK failed to load'
-                : `Error: ${String(e?.message||e)}`
-            );
-          }
-          setClient(c);
-          if(!c){
-            if(statusMsg.indexOf('SDK failed to load') === -1){
-              setStatusMsg('Invalid URL or key');
-            }
-            return;
-          }
-
-          const ref = jwtRefFromKey(k);
-          const subdomain = (u.match(/^https:\/\/([^\.]+)/i) || [,''])[1];
-          if(ref && subdomain && ref !== subdomain){
-            setStatusMsg(`Warning: key is for "${ref}" but URL is "${subdomain}". Trying anyway…`);
-          } else {
-            setStatusMsg('Checking connection…');
-          }
-
-          const res = await probe(c);
-          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
-        }
-
-        async function fetchSeason(){
-          if(!client){ setStatusMsg('Not connected'); return; }
-          const { data, error } = await client.from('season_standings')
-            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase fetch error',error); return; }
-          setStatusMsg('Connected');
-          const map={};
-          (data||[]).forEach(r=>{
-            if(isTeamLike(r.name)) return; // skip non-players
-            const bph = Array.isArray(r.best_per_hole)
-              ? r.best_per_hole
-              : (typeof r.best_per_hole === 'string'
-                  ? (JSON.parse(r.best_per_hole||'[]')||[])
-                  : []);
-            map[r.name]={
-              name:r.name,
-              totalPoints:r.total_points||0,
-              events:r.events||0,
-              bestEventPoints:r.best_event_points??0,
-              bestHolePoints:r.best_hole_points??0,
-              eclecticTotal:r.eclectic_total??0,
-              bestPerHole:Array.isArray(bph)?bph.map(n=>Number(n)||0):Array(18).fill(0)
-            };
-          });
-          setSeason(map);
-        }
-
-        useEffect(()=>{ (async()=>{
-          if(!client) return;
-          const res = await probe(client);
-          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
-          if(res.ok) await fetchSeason();
-        })(); }, [client]);
-
-        async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
-
-        const [computed,setComputed]=useState([]);
-        useMemo(()=>{
-          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
-          if(!base.length){setComputed([]);return;}
-          const groups=[]; const used=new Set();
-          for(let i=0;i<base.length;i++){
-            if(used.has(base[i].idx)) continue;
-            const grp=base.filter(r=>r.points===base[i].points).map(r=>r.idx);
-            grp.forEach(id=>used.add(id)); groups.push(grp);
-          }
-          let pos=1; const out=[]; const winnerIdx=base[0].idx;
-          for(const g of groups){
-            const start=pos;
-            const ptsValue=POINTS_TABLE[start-1]||0;
-            for(const i of g){
-              const r=rows.find(x=>x.idx===i);
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
-              out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
-            }
-            pos+=g.length;
-          }
-          setComputed(out.sort((a,b)=>a.position-b.position));
-        },[players]);
-
-        async function addEventToSeason(){
-          const next={...season};
-          for(const r of computed){
-            if(isTeamLike(r.name)) continue; // skip non-players
-            const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
-            const {bestPerHole,eclecticTotal}=mergeEclectic(prev.bestPerHole,r.perHole||[]);
-            const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
-            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max(0,...(r.perHole||[])));
-            next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, bestPerHole, eclecticTotal };
-          }
-          setSeason(next);
-
-          if(client){
-            const rows=Object.values(next)
-              .filter(r=>!isTeamLike(r.name))
-              .map(r=>({
-                name:r.name,
-                total_points: r.totalPoints|0,
-                events: r.events|0,
-                best_event_points: r.bestEventPoints|0,
-                best_hole_points: r.bestHolePoints|0,
-                eclectic_total: r.eclecticTotal|0,
-                best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
-              }));
-            const { error } = await client.from('season_standings').upsert(rows, { onConflict:'name' });
-            if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase upsert error', error); }
-            else { setStatusMsg('Connected'); }
-          }
-        }
-
-        function exportEvent(){
-          const rows=[["Event",eventName,"Date",dateStr],[],
-            ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-            ...computed
-              .filter(r=>!isTeamLike(r.name))
-              .map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
-          ];
-          downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function exportStandings(){
-          const list=Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
-            .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
-          const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-            ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])
-          ];
-          downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function exportEclecticCSV(){
-          const list=Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
-            .sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
-          const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
-          const rows=[header,
-            ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
-          ];
-          downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function resetSeason(){ setSeason({}); }
-
-        function DebugStatus(){
-          const u = (localStorage.getItem('supa_url')||'').toString();
-          const k = (localStorage.getItem('supa_key')||'').toString();
-          const sdkOk = !!(window.supabase && window.supabase.createClient);
-          return (
-            <p className="text-xs text-neutral-500 mt-1 owner-only">
-              Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code> · SDK: <code>{sdkOk?'loaded':'MISSING'}</code>
-            </p>
-          );
-        }
+        }, [players, coursePars]);
 
         return (
-          <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
-            <div className="max-w-6xl mx-auto space-y-6">
-              <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
-                <div
-                  onMouseDown={startPress}
-                  onTouchStart={startPress}
-                  onMouseUp={cancelPress}
-                  onMouseLeave={cancelPress}
-                  onTouchEnd={cancelPress}
-                >
-                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  {/* Status text visible only in Owner Mode */}
-                  <p className="text-sm owner-only" style={{color: connected ? '#059669' : '#dc2626'}}>
-                    Supabase: {statusMsg}
-                  </p>
-                  <DebugStatus />
-                  {/* Tiny hint for you only when owner is off (not obvious to others) */}
-                  {!ownerMode && (
-                    <span className="text-[10px] text-neutral-400 select-none"> </span>
-                  )}
-                </div>
-                <div className="flex gap-2 items-center">
-                  <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
-                  <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-                  <button onClick={exportEvent} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
-                </div>
+          <div className={"min-h-screen p-4 sm:p-6 md:p-8 "+(ownerMode?"owner-on":"")}>
+            <div className="max-w-5xl mx-auto space-y-6">
+              <header className="flex items-baseline justify-between gap-2">
+                <h1 className="text-2xl font-bold cursor-pointer select-none" onClick={()=>setOwnerMode(o=>!o)}>
+                  Den Society — Event Ratings
+                </h1>
+                <span className="text-xs text-neutral-500">Click title for owner debug</span>
               </header>
 
-              {/* Settings — Owner only */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
-                <h2 className="text-lg font-semibold mb-2">Settings</h2>
-                <div className="grid md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm block mb-1">Supabase URL</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="https://xxxx.supabase.co" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
+              {/* Import */}
+              <section className="bg-white p-4 rounded-xl shadow-sm">
+                <h2 className="font-semibold mb-2">Import Event CSV (Squabbit export)</h2>
+                <label className="border rounded-xl px-3 py-2 inline-block cursor-pointer bg-white">
+                  Choose CSV
+                  <input type="file" accept=".csv" className="hidden"
+                         onChange={e=>{const f=e.target.files?.[0]; if(f) importCSV(f);}} />
+                </label>
+                <p className="text-xs text-neutral-600 mt-2">
+                  Pars are auto-detected from the file (front/back or full 18). If detection fails, a default is used.
+                </p>
+
+                {/* Owner-only debug + manual override */}
+                <div className="owner-only mt-3 rounded-lg border border-neutral-200 p-3 bg-neutral-50">
+                  <div className="text-sm font-medium mb-1">Owner Debug</div>
+                  <div className="text-xs mono">
+                    <div>Detected pars: { (autoPars && autoPars.length===18) ? autoPars.join(', ') : '(none — using default)' }</div>
+                    <div>Using pars: { coursePars.join(', ') }</div>
+                    <div>Par-3 holes: {holeDebug[3].join(', ')||'—'}</div>
+                    <div>Par-4 holes: {holeDebug[4].join(', ')||'—'}</div>
+                    <div>Par-5 holes: {holeDebug[5].join(', ')||'—'}</div>
                   </div>
-                  <div>
-                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="eyJ..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                  <div className="mt-2">
+                    <label className="text-xs block mb-1">Override pars (comma-separated 18 values, leave blank to use auto)</label>
+                    <input className="w-full border rounded-lg p-2 mono bg-white"
+                           value={overridePars}
+                           onChange={e=>setOverridePars(e.target.value)} placeholder="e.g. 4,4,3,4,5,4,3,4,4,4,5,4,3,4,4,5,3,4" />
                   </div>
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); setStatusMsg('Not connected'); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
-                  <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
-                </div>
-                <p className="text-xs text-neutral-500 mt-2">Owner Mode is active. Press Ctrl+Alt+O to hide.</p>
               </section>
 
-              {/* Import + Event table */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Event Players</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import CSV
-                      <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
-                    </label>
-                    <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-                  </div>
+              {/* Ratings — this event */}
+              <section className="bg-white p-4 rounded-xl shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
+                  <button
+                    className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
+                    disabled={!ratings.length}
+                    onClick={()=>{
+                      const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
+                      if (ratings.length) {
+                        rows.push([
+                          "Field Average",
+                          fieldAvg.p3.toFixed(1), fieldAvg.r3,
+                          fieldAvg.p4.toFixed(1), fieldAvg.r4,
+                          fieldAvg.p5.toFixed(1), fieldAvg.r5
+                        ]);
+                      }
+                      ratings.forEach(r=>{
+                        rows.push([r.name, r.p3.toFixed(1), r.r3, r.p4.toFixed(1), r.r4, r.p5.toFixed(1), r.r5]);
+                      });
+                      downloadCSV(`DenSociety_EventRatings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`, rows);
+                    }}
+                  >Export Ratings</button>
                 </div>
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
-                    </thead>
-                    <tbody>
-                      {computed.map((r,i)=> (
-                        <tr key={i} className="border-b">
-                          <td>{r.position}</td>
-                          <td>{r.name}</td>
-                          <td>{Math.round(r.startExact)}</td>
-                          <td>{r.points}</td>
-                          <td>{r.back9}</td>
-                          <td>{r.leaguePoints}</td>
-                          <td>{r.nextPlaying}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot.</p>
-              </section>
-
-              {/* Season standings */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Season Standings</h2>
-                  <div className="flex gap-2">
-                    <button onClick={exportStandings} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
-                    <button onClick={resetSeason} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700">Reset Season (local)</button>
-                  </div>
-                </div>
+                <p className="text-xs text-neutral-600 mb-3">
+                  Based on Stableford in the loaded CSV. Pars are read from the file automatically.
+                </p>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="border-b text-left">
-                        <th>Rank</th><th>Name</th><th>Events</th><th>Total Points</th><th>Best Event</th><th>Best Hole</th><th>Eclectic Total</th>
+                        <th>Name</th>
+                        <th>Par-3 avg</th><th>Par-3 rating</th>
+                        <th>Par-4 avg</th><th>Par-4 rating</th>
+                        <th>Par-5 avg</th><th>Par-5 rating</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.values(season)
-                        .filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name))
-                        .map((r,i)=> (
+                      {ratings.length>0 && (
+                        <tr className="border-b bg-neutral-50 font-semibold">
+                          <td>Field Average</td>
+                          <td>{fieldAvg.p3.toFixed(1)}</td><td className={fieldAvg.c3}>{fieldAvg.r3}</td>
+                          <td>{fieldAvg.p4.toFixed(1)}</td><td className={fieldAvg.c4}>{fieldAvg.r4}</td>
+                          <td>{fieldAvg.p5.toFixed(1)}</td><td className={fieldAvg.c5}>{fieldAvg.r5}</td>
+                        </tr>
+                      )}
+                      {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td>
-                          <td>{r.name}</td>
-                          <td>{r.events}</td>
-                          <td>{r.totalPoints}</td>
-                          <td>{r.bestEventPoints ?? 0}</td>
-                          <td>{r.bestHolePoints ?? 0}</td>
-                          <td>{r.eclecticTotal ?? 0}</td>
+                          <td className="font-medium">{r.name}</td>
+                          <td>{r.p3.toFixed(1)}</td><td className={r.c3}>{r.r3}</td>
+                          <td>{r.p4.toFixed(1)}</td><td className={r.c4}>{r.r4}</td>
+                          <td>{r.p5.toFixed(1)}</td><td className={r.c5}>{r.r5}</td>
                         </tr>
                       ))}
+                      {!ratings.length && (
+                        <tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see ratings for this event.</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </section>
 
-              {/* Eclectic leaderboard */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
-                  <div className="flex gap-2">
-                    <button onClick={exportEclecticCSV} className="px-3 py-2 rounded-2xl bg-black text-white">Export Eclectic CSV</button>
-                  </div>
-                </div>
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th>Rank</th><th>Name</th><th>Eclectic Total</th>
-                        {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.values(season)
-                        .filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=>( (b.eclecticTotal??0) - (a.eclecticTotal??0) ) || a.name.localeCompare(b.name))
-                        .map((r,i)=>(
-                        <tr key={r.name} className="border-b">
-                          <td>{i+1}</td>
-                          <td>{r.name}</td>
-                          <td>{r.eclecticTotal ?? 0}</td>
-                          {(r.bestPerHole??Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {/* How-to */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <h2 className="text-lg font-semibold mb-2">How to Use</h2>
-                <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Click <strong>Import CSV</strong> and choose your Squabbit export.</li>
-                  <li>Click <strong>Add Event → Season</strong> to update the league & eclectic.</li>
-                  <li>Use the Export buttons for CSVs.</li>
-                </ol>
-                {/* Tiny owner tip area (invisible to others) */}
-                <p className="text-[11px] text-neutral-400 owner-only mt-2">Owner tip: Press Ctrl+Alt+O to toggle Owner Mode.</p>
-              </section>
             </div>
           </div>
         );
       }
 
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(<App />);
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
 </html>
+
