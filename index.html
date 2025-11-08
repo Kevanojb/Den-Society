@@ -72,14 +72,125 @@
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
 
-      // ---------- CSV parsing (stable, single-event) ----------
+      // ---------- CSV parsing & detectors ----------
       function splitSmart(raw){
         const d = raw.includes('\t')? '\t' : ',';
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
+
+      // Helper: extract two 9-length numeric runs after a marker cell (e.g., "Stableford")
+      function extractTwoNinesFromRow(row, markerText){
+        const getNum = x => {
+          const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
+          return Number.isFinite(v) ? v : NaN;
+        };
+        const idx = row.findIndex(v => String(v).trim() === markerText);
+        const start = idx >= 0 ? idx + 1 : 0;
+        const runs = [];
+        let run = [];
+        for(let j=start;j<row.length;j++){
+          const raw=row[j];
+          const n=getNum(raw);
+          const isNumericCell = raw !== '' && Number.isFinite(n);
+          if(isNumericCell){ run.push(n); }
+          else { if(run.length>=9) runs.push(run.slice(0,9)); run=[]; }
+        }
+        if(run.length>=9) runs.push(run.slice(0,9));
+        if(runs.length>=2){
+          return [...runs[0], ...runs[1]];
+        }
+        return null;
+      }
+
+      // Robust per-CSV par detector
+      function detectParsFromLines(lines){
+        const isParWord = v => /^par(s)?$/i.test(String(v).trim());
+
+        // Utility: collect all 18-length numeric windows from a row
+        function get18Runs(row, startIdx=0){
+          const nums = [];
+          const runs = [];
+          const toNum = x => {
+            const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
+            return Number.isFinite(v) ? v : NaN;
+          };
+          for(let j=startIdx; j<row.length; j++){
+            const n = toNum(row[j]);
+            if(Number.isFinite(n)){ nums.push(n); }
+            else{
+              if(nums.length>=18) runs.push(...sliceInto18s(nums));
+              nums.length = 0;
+            }
+          }
+          if(nums.length>=18) runs.push(...sliceInto18s(nums));
+          return runs;
+
+          function sliceInto18s(arr){
+            const out=[];
+            for(let k=0; k+17<arr.length; k++){
+              out.push(arr.slice(k,k+18));
+            }
+            return out;
+          }
+        }
+
+        // Score a candidate: prefer only 3/4/5, and having both 3s & 5s; also prefer near-integers
+        function scorePars(arr){
+          if(arr.length!==18) return -Infinity;
+          let ok=true, has3=false, has5=false;
+          for(const n of arr){
+            const r = Math.round(n);
+            if(!(r===3||r===4||r===5)){ ok=false; break; }
+            if(r===3) has3=true;
+            if(r===5) has5=true;
+          }
+          if(!ok) return -Infinity;
+          const intCloseness = -arr.reduce((s,n)=>s+Math.abs(n-Math.round(n)),0);
+          return (has3?5:0) + (has5?5:0) + intCloseness;
+        }
+
+        // 1) Look for explicit Par/Pars/PAR on any row
+        for(const row of lines){
+          const parIdx = row.findIndex(isParWord);
+          if(parIdx>=0){
+            const runs = get18Runs(row, parIdx+1);
+            let best=null, bestScore=-Infinity;
+            for(const cand of runs){
+              const sc=scorePars(cand);
+              if(sc>bestScore){ best=cand; bestScore=sc; }
+            }
+            if(best){
+              return best.map(n=>{
+                const r=Math.round(Number(n)||0);
+                return (r===3||r===4||r===5)?r:4;
+              });
+            }
+          }
+        }
+
+        // 2) Heuristic: any unlabeled 18-run of 3/4/5 numbers
+        let best=null, bestScore=-Infinity;
+        for(const row of lines){
+          const runs = get18Runs(row, 0);
+          for(const cand of runs){
+            const sc=scorePars(cand);
+            if(sc>bestScore){ best=cand; bestScore=sc; }
+          }
+        }
+        if(best && bestScore>-Infinity){
+          return best.map(n=>Math.max(3, Math.min(5, Math.round(Number(n)||4))));
+        }
+
+        // 3) Give up
+        return null;
+      }
+
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n');
         const lines = rows.map(splitSmart);
+
+        // Detect course pars (per CSV)
+        const detectedPars = detectParsFromLines(lines);
 
         // 1) Players
         const playerHeaderRow = lines.findIndex(r=>(r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
@@ -109,47 +220,23 @@
 
         // 3) Per-hole Stableford from detailed card — robust extractor
         const holeData={};
-        const getNum = x => {
-          const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
-          return Number.isFinite(v) ? v : NaN;
-        };
 
         function extract18FromStablefordRow(st) {
-          // Find the column that literally contains "Stableford"
-          const sIdx = st.findIndex(v => String(v).trim() === 'Stableford');
-          const start = sIdx >= 0 ? sIdx + 1 : 0;
-
-          // Collect runs of consecutive numeric cells (>= 9 long), ignoring blanks/labels like Out/In/Total
-          const runs = [];
-          let run = [];
-
-          for (let j = start; j < st.length; j++) {
-            const raw = st[j];
-            const n = getNum(raw);
-
-            const isNumericCell = raw !== '' && Number.isFinite(n);
-
-            if (isNumericCell) {
-              run.push(n);
-            } else {
-              if (run.length >= 9) runs.push(run.slice(0, 9));
-              run = [];
-            }
-          }
-          if (run.length >= 9) runs.push(run.slice(0, 9));
-
-          if (runs.length >= 2) {
-            const perHole = [...runs[0], ...runs[1]];
-            const back9 = perHole.slice(9).reduce((a, b) => a + b, 0);
+          const perHole = extractTwoNinesFromRow(st, 'Stableford');
+          if(perHole){
+            const back9 = perHole.slice(9).reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
             return { perHole, back9 };
           }
-
           // Fallback to legacy offsets if structure is unexpected
+          const getNum = x => {
+            const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
+            return Number.isFinite(v) ? v : NaN;
+          };
           const front9 = st.slice(3, 12).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
           const back9H = st.slice(13, 22).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
-          const perHole = [...front9, ...back9H];
+          const combined = [...front9, ...back9H];
           const back9 = back9H.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-          return { perHole, back9 };
+          return { perHole: combined, back9 };
         }
 
         for(const p of players){
@@ -168,20 +255,23 @@
           }
         }
 
-        return players.map(p=>({
-          name:p.name,
-          gender:p.gender,
-          handicap:p.handicap,
-          points: totals[p.name]||0,
-          back9: holeData[p.name]?.back9 || 0,
-          perHole: holeData[p.name]?.perHole || []
-        }));
+        return {
+          detectedPars, // may be null
+          players: players.map(p=>({
+            name:p.name,
+            gender:p.gender,
+            handicap:p.handicap,
+            points: totals[p.name]||0,
+            back9: holeData[p.name]?.back9 || 0,
+            perHole: holeData[p.name]?.perHole || []
+          }))
+        };
       }
 
       // ---------- Ratings helpers (event-only, local) ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
-      const makeDefaultPars = ()=>[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4]; // safe default
+      const makeDefaultPars = ()=>[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4]; // fallback only
       function eventParAverages(perHole, pars){
         let sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
         for(let i=0;i<Math.min(18, perHole.length); i++){
@@ -216,7 +306,30 @@
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        // Connect on boot (unchanged)
+        // Event + season data
+        const [eventName,setEventName]=useState("Den Society Meeting");
+        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
+        const [players,setPlayers]=useState([]);
+        const [season,setSeason]=useState({});
+
+        // Pars state
+        const [detectedPars,setDetectedPars]=useState(null); // from CSV if available
+        const [useDetectedPars,setUseDetectedPars]=useState(true);
+        const [parsStr,setParsStr]=useState(localStorage.getItem('den_course_pars')||makeDefaultPars().join(','));
+
+        const manualPars = useMemo(()=>{
+          try{
+            const arr = parsStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
+            return arr.length===18 ? arr : makeDefaultPars();
+          }catch{ return makeDefaultPars(); }
+        },[parsStr]);
+
+        const effectivePars = useMemo(()=>{
+          if(useDetectedPars && Array.isArray(detectedPars) && detectedPars.length===18) return detectedPars;
+          return manualPars;
+        },[useDetectedPars, detectedPars, manualPars]);
+
+        // Boot: connect + load season
         useEffect(()=>{
           let cancelled=false;
           async function boot(){
@@ -253,23 +366,17 @@
           }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
         }
 
-        // Event + season data
-        const [eventName,setEventName]=useState("Den Society Meeting");
-        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
-        const [players,setPlayers]=useState([]);
-        const [season,setSeason]=useState({});
+        async function importCSV(file){
+          const text=await file.text();
+          const parsed = parseSquabbitCSV(text);
+          setPlayers(parsed.players||[]);
+          setDetectedPars(parsed.detectedPars||null);
+          if(Array.isArray(parsed.detectedPars) && parsed.detectedPars.length===18){
+            setUseDetectedPars(true);
+          }
+        }
 
-        async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
         function resetSeasonLocal(){ setSeason({}); }
-
-        // Course pars (Owner-only input, saved locally). Ratings read from here only.
-        const [parsStr,setParsStr]=useState(localStorage.getItem('den_course_pars')||makeDefaultPars().join(','));
-        const coursePars = useMemo(()=>{
-          try{
-            const arr = parsStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
-            return arr.length===18 ? arr : makeDefaultPars();
-          }catch{ return makeDefaultPars(); }
-        },[parsStr]);
 
         // This-event table (positions, league pts, next handicap)
         const computed = useMemo(()=>{
@@ -290,7 +397,7 @@
             for(const i of g){
               const r=rows.find(x=>x.idx===i);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
-              out.push({...r,position=start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
+              out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
             }
             pos+=g.length;
           }
@@ -304,7 +411,7 @@
           if(error){ setStatusMsg(`Error: ${error.message}`); return; }
           const map={};
           (data||[]).forEach(r=>{
-            if(isTeamLike(r.name)) return; // ignore team/aggregate rows
+            if(isTeamLike(r.name)) return;
             const bph = Array.isArray(r.best_per_hole)
               ? r.best_per_hole
               : (typeof r.best_per_hole==='string' ? (JSON.parse(r.best_per_hole||'[]')||[]) : []);
@@ -360,7 +467,7 @@
           }
         }
 
-        // Exports (unchanged)
+        // Exports
         function exportEvent(){
           const rows=[["Event",eventName,"Date",dateStr],[],
             ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
@@ -393,7 +500,7 @@
           const out=[];
           for(const p of players){
             if(isTeamLike(p.name)) continue;
-            const {p3,p4,p5}=eventParAverages(p.perHole||[], coursePars);
+            const {p3,p4,p5}=eventParAverages(p.perHole||[], effectivePars);
             out.push({
               name:p.name,
               p3:to1(p3), p4:to1(p4), p5:to1(p5),
@@ -403,7 +510,7 @@
             });
           }
           return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-        },[players, coursePars]);
+        },[players, effectivePars]);
 
         const fieldAvg = useMemo(()=>{
           let s3=0,c3=0,s4=0,c4=0,s5=0,c5=0;
@@ -411,7 +518,7 @@
             if(isTeamLike(p.name)) continue;
             const perHole=p.perHole||[];
             for(let i=0;i<Math.min(18, perHole.length); i++){
-              const pts=Number(perHole[i])||0; const par=Number(coursePars[i])||4;
+              const pts=Number(perHole[i])||0; const par=Number(effectivePars[i])||4;
               if(par===3){s3+=pts;c3++;} else if(par===4){s4+=pts;c4++;} else if(par===5){s5+=pts;c5++;}
             }
           }
@@ -421,8 +528,9 @@
             r3:ratingLabel(a3), r4:ratingLabel(a4), r5:ratingLabel(a5),
             c3:ratingColor(a3), c4:ratingColor(a4), c5:ratingColor(a5)
           };
-        },[players, coursePars]);
+        },[players, effectivePars]);
 
+        // ---------- UI ----------
         return (
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
             <div className="max-w-6xl mx-auto space-y-6">
@@ -578,7 +686,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
-                <button
+                  <button
                     className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
                     disabled={!ratings.length}
                     onClick={()=>{
@@ -592,7 +700,7 @@
                   >Export Ratings</button>
                 </div>
                 <p className="text-xs text-neutral-600 mb-3">
-                  Uses the 18-hole pars set in Owner Mode to group holes by Par-3/4/5. This section does not write to Supabase.
+                  Pars for ratings: <strong>{(useDetectedPars && detectedPars) ? 'Detected from CSV' : 'Manual (Owner Mode)'}</strong>.
                 </p>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -632,12 +740,21 @@
               {/* Owner-only: Course pars input for ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Course Setup (Pars for Ratings)</h2>
-                <p className="text-sm text-neutral-600 mb-2">Enter 18 comma-separated pars (used only for the Ratings section, saved locally).</p>
+                <p className="text-sm text-neutral-600 mb-2">
+                  Detected pars: <code className="mono">{Array.isArray(detectedPars)?detectedPars.join(','):'—'}</code>
+                </p>
+                <div className="flex items-center gap-3 mb-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={useDetectedPars} onChange={e=>setUseDetectedPars(e.target.checked)} />
+                    Use detected pars from CSV (if available)
+                  </label>
+                </div>
+                <p className="text-sm text-neutral-600 mb-2">Or enter 18 comma-separated pars (used when the checkbox above is off):</p>
                 <input
                   className="w-full border rounded-xl p-2 mono bg-white"
                   value={parsStr}
                   onChange={e=>{ setParsStr(e.target.value); localStorage.setItem('den_course_pars', e.target.value); }}
-                  placeholder="e.g. 4,4,3,4,5,4,3,4,4,4,5,4,3,4,4,5,3,4"
+                  placeholder="e.g. 5,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4"
                 />
               </section>
 
@@ -645,9 +762,9 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Import a Squabbit CSV.</li>
+                  <li>Import a Squabbit CSV. Pars are auto-detected when present.</li>
                   <li>Event table appears; click <strong>Add Event → Season</strong> to update Supabase.</li>
-                  <li>Toggle <strong>Owner Mode</strong> (Ctrl+Alt+O or long-press title) to set course pars for ratings.</li>
+                  <li>Toggle <strong>Owner Mode</strong> (Ctrl+Alt+O or long-press title) to view/override pars for ratings.</li>
                   <li>Ratings section is event-only and won’t write anything to Supabase.</li>
                   <li>Export Event / Standings / Eclectic / Ratings as needed.</li>
                 </ol>
