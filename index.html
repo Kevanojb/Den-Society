@@ -8,7 +8,10 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+
+    <!-- Use jsDelivr for supabase-js (more reliable on some networks) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
     <style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}</style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
@@ -95,27 +98,23 @@
         return {bestPerHole,eclecticTotal};
       }
 
-      // ---------- Supabase helpers (robust + forgiving) ----------
+      // ---------- Supabase helpers ----------
       function normalizeUrl(u){
         if(!u) return '';
         let s = String(u).trim();
-        s = s.replace(/\/+$/,''); // drop trailing slashes
-        // If user typed bare host, add https://
+        s = s.replace(/\/+$/,''); // drop trailing slash
         if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
         try{
           const url = new URL(s);
-          return `https://${url.host}`; // ensure no path
+          return `https://${url.host}`;
         }catch{
           return '';
         }
       }
-
       function cleanKey(k){
         if(!k) return '';
-        // strip non-printable/invisible characters, then trim
         return String(k).replace(/[^\x20-\x7E]/g,'').trim();
       }
-
       function jwtRefFromKey(k){
         try{
           const parts = k.split('.');
@@ -126,22 +125,20 @@
           return payload?.ref || null;
         }catch{ return null; }
       }
-
       function makeSupabaseClient(url, key){
-        try{
-          const u = normalizeUrl(url);
-          const k = cleanKey(key);
-          if(!u || !k) return null; // only reject if empty after cleaning
-          return window.supabase.createClient(u, k, { auth: { persistSession:false }});
-        }catch(e){
-          console.warn("Supabase client failed", e);
-          return null;
-        }
-      }
+        const u = normalizeUrl(url);
+        const k = cleanKey(key);
+        if(!u || !k) return null;
 
+        // NEW: explicit SDK presence check with precise error
+        if(!(window.supabase && window.supabase.createClient)){
+          throw new Error('supabase-js SDK did not load');
+        }
+        return window.supabase.createClient(u, k, { auth: { persistSession:false }});
+      }
       async function probe(client){
         try{
-          const { data, error, status } = await client
+          const { error, status } = await client
             .from('season_standings')
             .select('*', { head:false })
             .limit(1);
@@ -151,7 +148,6 @@
           return { ok:false, status:0, msg:String(e?.message||e) };
         }
       }
-
       function mask(s, showStart=6, showEnd=4){
         if(!s) return '';
         if(s.length <= showStart + showEnd) return s;
@@ -165,22 +161,32 @@
         const [season,setSeason]=useState({});
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        // Defaults baked in (used when inputs are blank)
+        // Defaults (yours)
         const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
 
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
 
-        const [client,setClient] = useState(makeSupabaseClient(
-          normalizeUrl(localStorage.getItem('supa_url') || defaultURL),
-          cleanKey(localStorage.getItem('supa_key') || defaultKEY)
-        ));
+        const [client,setClient] = useState(()=>{
+          try{
+            return makeSupabaseClient(
+              localStorage.getItem('supa_url') || defaultURL,
+              localStorage.getItem('supa_key') || defaultKEY
+            );
+          }catch(e){
+            console.warn(e);
+            if(String(e?.message||'').includes('SDK did not load')){
+              // surface clear message on first paint
+              setTimeout(()=>setStatusMsg('Error: supabase-js SDK failed to load'), 0);
+            }
+            return null;
+          }
+        });
 
         const connected = statusMsg.startsWith('Connected');
 
         async function saveSupa(){
-          // if user left inputs empty, fall back to defaults
           const rawU = (supaURL || '').trim();
           const rawK = (supaKEY || '').trim();
           const u = normalizeUrl(rawU || defaultURL);
@@ -189,11 +195,21 @@
           localStorage.setItem('supa_url', u);
           localStorage.setItem('supa_key', k);
 
-          const c = makeSupabaseClient(u, k);
+          let c = null;
+          try{
+            c = makeSupabaseClient(u, k);
+          }catch(e){
+            setStatusMsg(
+              String(e?.message||'').includes('SDK did not load')
+                ? 'Error: supabase-js SDK failed to load'
+                : `Error: ${String(e?.message||e)}`
+            );
+          }
           setClient(c);
-
           if(!c){
-            setStatusMsg('Invalid URL or key (empty after cleaning + defaults)');
+            if(statusMsg.indexOf('SDK failed to load') === -1){
+              setStatusMsg('Invalid URL or key (SDK missing or fields empty)');
+            }
             return;
           }
 
@@ -249,7 +265,6 @@
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length){setComputed([]);return;}
-          // Tie groups by total points; share highest slot points
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
@@ -304,7 +319,6 @@
           ];
           downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function exportStandings(){
           const list=Object.values(season).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
           const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
@@ -312,7 +326,6 @@
           ];
           downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function exportEclecticCSV(){
           const list=Object.values(season).sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
           const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
@@ -321,16 +334,15 @@
           ];
           downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function resetSeason(){ setSeason({}); }
 
-        // Small debug footer (what values are currently in use)
         function DebugStatus(){
           const u = (localStorage.getItem('supa_url')||'').toString();
           const k = (localStorage.getItem('supa_key')||'').toString();
+          const sdkOk = !!(window.supabase && window.supabase.createClient);
           return (
             <p className="text-xs text-neutral-500 mt-1">
-              Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code>
+              Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code> · SDK: <code>{sdkOk?'loaded':'MISSING'}</code>
             </p>
           );
         }
@@ -371,7 +383,7 @@
                   <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); setStatusMsg('Not connected'); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
                   <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Tip: You can type just <code>mqknahdfpqxrpgpxqtus.supabase.co</code> — I'll add <code>https://</code> for you.</p>
+                <p className="text-xs text-neutral-500 mt-2">Tip: Serve this file via a local server if you see CORS or SDK blocked, e.g. <code>python -m http.server</code></p>
               </section>
 
               {/* Import + Event table */}
@@ -494,3 +506,6 @@
     </script>
   </body>
 </html>
+
+
+      
