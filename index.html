@@ -14,7 +14,6 @@
       .owner-only{display:none;}
       .owner-on .owner-only{display:block;}
       .mono{font-variant-numeric:tabular-nums}
-      details summary { cursor: pointer; }
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
     </style>
   </head>
@@ -23,7 +22,7 @@
 
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
-      const { useMemo, useState, useEffect } = React;
+      const { useMemo, useState, useEffect, useRef } = React;
 
       // ---------- Small utils ----------
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
@@ -74,22 +73,22 @@
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
 
-      // ---------- CSV parsing & detectors ----------
+      // ---------- CSV parsing ----------
       function splitSmart(raw){
         const d = raw.includes('\t')? '\t' : ',';
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
-      const toNum = x => {
+      function toNum(x){
         const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
         return Number.isFinite(v) ? v : NaN;
-      };
+      }
 
       // Detect Men/Women pars from CSV. If only one set found, use for both.
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
-          for(const cell of row){
-            const s=String(cell||'').trim();
+          for(let i=0;i<row.length;i++){
+            const s=String(row[i]||'').trim();
             if(/^(par|pars|out|in|total)$/i.test(s)) continue;
             const r = Math.round(toNum(s));
             if(r===3||r===4||r===5){
@@ -99,47 +98,50 @@
           }
           return pars.length===18 ? pars : null;
         }
-        const parRows = lines.filter(r => r.some(c=>/^pars?$/i.test(String(c).trim())));
-        let detected=null;
-        for(const row of parRows){
-          const cand=scanParRow(row);
+        const parRows = lines.filter(function(r){
+          for(let i=0;i<r.length;i++){ if(/^pars?$/i.test(String(r[i]).trim())) return true; }
+          return false;
+        });
+
+        let detected = null;
+        for(let i=0;i<parRows.length;i++){
+          const cand = scanParRow(parRows[i]);
           if(cand){ detected=cand; break; }
         }
+
         if(!detected && parRows.length>=2){
-          // stitch first two 9s
           const nines=[];
-          for(const row of parRows){
-            const nums=row.map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
+          for(let k=0;k<parRows.length;k++){
+            const nums = parRows[k].map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
             if(nums.length>=9) nines.push(nums.slice(0,9));
           }
-          if(nines.length>=2) detected=[...nines[0],...nines[1]].slice(0,18);
+          if(nines.length>=2) detected=[].concat(nines[0], nines[1]).slice(0,18);
         }
+
         if(!detected){
-          // heuristic any row with 18 runs of 3/4/5
-          for(const row of lines){
-            const nums=row.map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
-            if(nums.length>=18){ detected=nums.slice(0,18); break; }
+          for(let r=0;r<lines.length;r++){
+            const nums = lines[r].map(toNum).map(n=>Math.round(n)).filter(v=>v===3||v===4||v===5);
+            if(nums.length>=18){ detected = nums.slice(0,18); break; }
           }
         }
+
         return { men: detected||null, women: detected||null };
       }
 
-      // STRICT Stableford per-hole reader: only 0..6 and P/\ count; ignore totals like 17/36/72.
+      // STRICT Stableford per-hole reader: only 0..6 and P or "\" → 0; ignore 17/36/72 etc.
       function readStablefordPerHole(row) {
-        const start = row.findIndex(v => String(v).trim() === 'Stableford');
+        var start = -1;
+        for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
         if (start < 0) return null;
 
         const vals = [];
         for (let j = start + 1; j < row.length && vals.length < 18; j++) {
-          const raw = String(row[j] ?? '').trim();
-          if (/^[Pp\\]$/.test(raw)) { vals.push(0); continue; }
-
+          const raw = String(row[j] || '').trim();
+          if (raw === '' ) continue;
+          if (raw === 'P' || raw === 'p' || raw === '\\') { vals.push(0); continue; }
           const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
-          if (Number.isFinite(n) && n >= 0 && n <= 6) {
-            vals.push(n);
-            continue;
-          }
-          // else ignore (labels, totals, blanks)
+          if (Number.isFinite(n) && n >= 0 && n <= 6) { vals.push(n); }
+          // else ignore
         }
         if (vals.length >= 18) return vals.slice(0, 18);
         return null;
@@ -152,8 +154,14 @@
         // Detect pars
         const detectedBoth = detectBothParsFromLines(lines);
 
-        // 1) Players from summary "Name/Hdcp"
-        const playerHeaderRow = lines.findIndex(r=>(r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
+        // 1) Players
+        const playerHeaderRow = (function(){
+          for(let i=0;i<lines.length;i++){
+            if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp') return i;
+          }
+          return -1;
+        })();
+
         const players=[];
         if(playerHeaderRow>=0){
           for(let i=playerHeaderRow+1;i<lines.length;i++){
@@ -164,19 +172,24 @@
             if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
           }
         }
-        // 1b) Detect gender from detailed rows (2nd cell like "55 Women's tee")
-        const genderMap=new Map();
-        for(const row of lines){
-          const nm=(row?.[0]||'').trim();
+
+        // 1b) Gender from detailed rows (2nd cell like "55 Women's tee")
+        const genderMap={};
+        for(let i=0;i<lines.length;i++){
+          const nm=(lines[i][0]||'').trim();
           if(!nm) continue;
-          const tee=(row?.[1]||'').toLowerCase();
-          if(/women|ladies/.test(tee)) genderMap.set(nm,'F');
-          else if(players.some(p=>p.name===nm)) genderMap.set(nm,'M');
+          const tee=String(lines[i][1]||'').toLowerCase();
+          if(/women|ladies/.test(tee)) genderMap[nm]='F';
+          else if(genderMap[nm]==null) genderMap[nm]='M';
         }
-        players.forEach(p=>{ if(genderMap.has(p.name)) p.gender=genderMap.get(p.name); });
+        for(let i=0;i<players.length;i++){
+          const nm=players[i].name;
+          if(genderMap[nm]) players[i].gender=genderMap[nm];
+        }
 
         // 2) Stableford totals table
-        const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
+        let stablefordSectionRow=-1;
+        for(let i=0;i<lines.length;i++){ if((lines[i][0]||'')==='Stableford'){ stablefordSectionRow=i; break; } }
         const totals={};
         if(stablefordSectionRow>=0){
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
@@ -190,19 +203,25 @@
 
         // 3) Per-hole Stableford from detailed card
         const holeData={};
-        for (const p of players){
-          for (let i=0;i<lines.length-1;i++){
-            const isPlayerRow = (lines[i]?.[0]||'').trim()===p.name;
-            const nextHasStableford =
-              String(lines[i + 1]?.[1] || '').trim() === 'Stableford' ||
-              (Array.isArray(lines[i + 1]) && lines[i + 1].some?.(c => String(c).trim() === 'Stableford'));
-            if (isPlayerRow && nextHasStableford) {
-              const perHole = readStablefordPerHole(lines[i+1] || []);
-              if (perHole) {
+        for(let pIdx=0;pIdx<players.length;pIdx++){
+          const p=players[pIdx];
+          for(let i=0;i<lines.length-1;i++){
+            const isPlayerRow = (lines[i][0]||'').trim()===p.name;
+            let nextHasStableford=false;
+            if(Array.isArray(lines[i+1])){
+              if(String(lines[i+1][1]||'').trim()==='Stableford') nextHasStableford=true;
+              else{
+                for(let k=0;k<lines[i+1].length;k++){ if(String(lines[i+1][k]).trim()==='Stableford'){ nextHasStableford=true; break; } }
+              }
+            }
+            if(isPlayerRow && nextHasStableford){
+              const st = lines[i+1] || [];
+              const perHole = readStablefordPerHole(st);
+              if(perHole){
                 const back9 = perHole.slice(9).reduce((a,b)=>a+b,0);
-                holeData[p.name] = { perHole, back9 };
-              } else {
-                holeData[p.name] = { perHole: Array(18).fill(0), back9: 0 };
+                holeData[p.name]={perHole,back9};
+              }else{
+                holeData[p.name]={perHole:Array(18).fill(0), back9:0};
               }
               break;
             }
@@ -217,8 +236,8 @@
             gender:p.gender,
             handicap:p.handicap,
             points: totals[p.name]||0,
-            back9: holeData[p.name]?.back9 || 0,
-            perHole: holeData[p.name]?.perHole || []
+            back9: holeData[p.name] ? holeData[p.name].back9 : 0,
+            perHole: holeData[p.name] ? holeData[p.name].perHole : []
           }))
         };
       }
@@ -242,7 +261,7 @@
 
       // ---------- App ----------
       function App(){
-        // Owner Mode
+        // Owner Mode (toggle with Ctrl+Alt+O)
         const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
         useEffect(()=>{ if(ownerMode) document.documentElement.classList.add('owner-on'); else document.documentElement.classList.remove('owner-on'); },[ownerMode]);
         useEffect(()=>{
@@ -251,45 +270,16 @@
           return ()=>window.removeEventListener('keydown', onKey);
         },[ownerMode]);
 
-        // Supabase defaults
+        // Supabase defaults (unchanged)
         const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        // Event + season data
-        const [eventName,setEventName]=useState("Den Society Meeting");
-        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
-        const [players,setPlayers]=useState([]);
-        const [season,setSeason]=useState({});
-
-        // Pars state (Men & Women)
-        const [detectedMen,setDetectedMen]=useState(null);
-        const [detectedWomen,setDetectedWomen]=useState(null);
-        const [useDetected,setUseDetected]=useState(true);
-
-        const [parsMenStr,setParsMenStr]=useState(localStorage.getItem('den_pars_men')||defaultMen.join(','));
-        const [parsWomenStr,setParsWomenStr]=useState(localStorage.getItem('den_pars_women')||defaultWomen.join(','));
-
-        const manualMen = useMemo(()=>{
-          try{
-            const arr = parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
-            return arr.length===18 ? arr : defaultMen;
-          }catch{ return defaultMen; }
-        },[parsMenStr]);
-        const manualWomen = useMemo(()=>{
-          try{
-            const arr = parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
-            return arr.length===18 ? arr : defaultWomen;
-          }catch{ return defaultWomen; }
-        },[parsWomenStr]);
-
-        const effectiveMen   = useMemo(()=> (useDetected && Array.isArray(detectedMen) && detectedMen.length===18) ? detectedMen : manualMen, [useDetected, detectedMen, manualMen]);
-        const effectiveWomen = useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
-
-        // Boot: connect + load season
+        // Connect on boot
         useEffect(()=>{
           let cancelled=false;
           async function boot(){
@@ -326,6 +316,36 @@
           }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
         }
 
+        // Event + season data
+        const [eventName,setEventName]=useState("Den Society Meeting");
+        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
+        const [players,setPlayers]=useState([]);
+        const [season,setSeason]=useState({});
+
+        // Pars state (Men & Women)
+        const [detectedMen,setDetectedMen]=useState(null);
+        const [detectedWomen,setDetectedWomen]=useState(null);
+        const [useDetected,setUseDetected]=useState(true);
+
+        const [parsMenStr,setParsMenStr]=useState(localStorage.getItem('den_pars_men')||defaultMen.join(','));
+        const [parsWomenStr,setParsWomenStr]=useState(localStorage.getItem('den_pars_women')||defaultWomen.join(','));
+
+        const manualMen = useMemo(()=>{
+          try{
+            const arr = parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
+            return arr.length===18 ? arr : defaultMen;
+          }catch{ return defaultMen; }
+        },[parsMenStr]);
+        const manualWomen = useMemo(()=>{
+          try{
+            const arr = parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
+            return arr.length===18 ? arr : defaultWomen;
+          }catch{ return defaultWomen; }
+        },[parsWomenStr]);
+
+        const effectiveMen   = useMemo(()=> (useDetected && Array.isArray(detectedMen) && detectedMen.length===18) ? detectedMen : manualMen, [useDetected, detectedMen, manualMen]);
+        const effectiveWomen = useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
+
         async function importCSV(file){
           const text=await file.text();
           const parsed = parseSquabbitCSV(text);
@@ -334,7 +354,6 @@
           setDetectedWomen(parsed.detectedWomen||null);
           if(parsed.detectedMen){ setUseDetected(true); }
         }
-
         function resetSeasonLocal(){ setSeason({}); }
 
         // This-event table (positions, league pts, next handicap)
@@ -342,28 +361,30 @@
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
-          // Tie groups by total points
+          // Tie groups
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
             const grp=base.filter(r=>r.points===base[i].points).map(r=>r.idx);
-            grp.forEach(id=>used.add(id)); groups.push(grp);
+            for(let k=0;k<grp.length;k++) used.add(grp[k]);
+            groups.push(grp);
           }
           let pos=1; const out=[]; const winnerIdx=base[0].idx;
-          for(const g of groups){
+          for(let g=0; g<groups.length; g++){
             const start=pos;
             const ptsValue=POINTS_TABLE[start-1]||0;
-            for(const i of g){
+            for(let gi=0; gi<groups[g].length; gi++){
+              const i = groups[g][gi];
               const r=rows.find(x=>x.idx===i);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
               out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
             }
-            pos+=g.length;
+            pos+=groups[g].length;
           }
           return out.sort((a,b)=>a.position-b.position);
         },[players]);
 
-        // Supabase fetch & upsert
+        // Supabase fetch & upsert (unchanged)
         async function fetchSeasonWith(c){
           const { data, error } = await c.from('season_standings')
             .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
@@ -395,10 +416,8 @@
             const bestPerHole = Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0, (r.perHole||[])[i]||0));
             const eclecticTotal = bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
             const nextBestEvent = Math.max(prev.bestEventPoints||0, r.points||0);
-
-            // SAFETY: cap best hole at 6
             const bestHoleFromEvent = Math.max(0, ...(r.perHole || []));
-            const nextBestHole  = Math.max(prev.bestHolePoints || 0, Math.min(6, bestHoleFromEvent));
+            const nextBestHole  = Math.max(prev.bestHolePoints || 0, Math.min(6, bestHoleFromEvent)); // cap at 6
 
             next[r.name] = {
               name:r.name,
@@ -430,10 +449,11 @@
           }
         }
 
-        // ---------- Ratings (THIS EVENT ONLY) ----------
+        // ---------- Ratings (THIS EVENT ONLY; no Supabase writes) ----------
         const ratings = useMemo(()=>{
           const out=[];
-          for(const p of players){
+          for(let i=0;i<players.length;i++){
+            const p = players[i];
             if(isTeamLike(p.name)) continue;
             const pars = (p.gender==='F') ? effectiveWomen : effectiveMen;
             const {p3,p4,p5}=eventParAverages(p.perHole||[], pars);
@@ -452,12 +472,13 @@
           let s3m=0,c3m=0,s4m=0,c4m=0,s5m=0,c5m=0;
           let s3f=0,c3f=0,s4f=0,c4f=0,s5f=0,c5f=0;
 
-          for(const p of players){
+          for(let i=0;i<players.length;i++){
+            const p = players[i];
             if(isTeamLike(p.name)) continue;
             const perHole=p.perHole||[];
             const pars=(p.gender==='F')?effectiveWomen:effectiveMen;
-            for(let i=0;i<Math.min(18, perHole.length); i++){
-              const pts=Number(perHole[i])||0; const par=Number(pars[i])||4;
+            for(let h=0;h<Math.min(18, perHole.length); h++){
+              const pts=Number(perHole[h])||0; const par=Number(pars[h])||4;
               if(p.gender==='F'){
                 if(par===3){s3f+=pts;c3f++;} else if(par===4){s4f+=pts;c4f++;} else if(par===5){s5f+=pts;c5f++;}
               }else{
@@ -472,8 +493,8 @@
           };
         },[players, effectiveMen, effectiveWomen]);
 
-        // ---------- UI ----------
-        function chip(label){ return <span className="chip mono">{label}</span>; }
+        // ---------- UI helpers ----------
+        const chip = label => <span className="chip mono">{label}</span>;
 
         return (
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
@@ -493,9 +514,35 @@
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
                   <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-                  <button onClick={exportEvent} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
+                  <button onClick={()=>downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
+                    [["Event",eventName,"Date",dateStr],[],
+                     ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
+                     ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
+                    ])}
+                    className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40"
+                    disabled={!players.length}>Export Event CSV</button>
                 </div>
               </header>
+
+              {/* Settings (Owner only) */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
+                <h2 className="text-lg font-semibold mb-2">Settings</h2>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm block mb-1">Supabase URL</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
+                  <button onClick={()=>client && fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Toggle Owner Mode with Ctrl+Alt+O.</p>
+              </section>
 
               {/* Import + Event table */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
@@ -503,7 +550,7 @@
                   <h2 className="text-lg font-semibold">Event Players</h2>
                   <div className="flex flex-wrap gap-2">
                     <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
-                      <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
+                      <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)importCSV(f);}} />
                     </label>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
                   </div>
@@ -514,7 +561,7 @@
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {!players.length && (
+                      {computed.length===0 && (
                         <tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV to see the event.</td></tr>
                       )}
                       {computed.map((r,i)=> (
@@ -622,7 +669,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
-              {/* Ratings — shows MEN/WOMEN pars at top */}
+              {/* Ratings — with MEN/WOMEN pars shown at the top */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
@@ -639,7 +686,7 @@
                   >Export Ratings</button>
                 </div>
 
-                {/* Pars in use (Men/Women) */}
+                {/* Pars shown explicitly */}
                 <div className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                   <div className="mono text-sm overflow-auto">
@@ -679,7 +726,7 @@
                 </div>
               </section>
 
-              {/* Owner-only: Course pars input for ratings (Men & Women) */}
+              {/* Owner-only: Course pars input for ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Course Setup — Pars for Ratings</h2>
                 <p className="text-sm text-neutral-600 mb-2">
@@ -717,9 +764,9 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Import a Squabbit CSV. Pars are auto-detected (supports single Par row with Out/In/Total or separate front/back rows).</li>
+                  <li>Import a Squabbit CSV. Pars are auto-detected (single Par row with Out/In/Total or two 9-hole rows).</li>
                   <li>Ratings use Men/Women pars per player (Women’s tee/Ladies → Women).</li>
-                  <li>Use Owner Mode to override pars for Men/Women if needed.</li>
+                  <li>Override Men/Women pars in Owner Mode if the CSV omits one set.</li>
                   <li>Per-hole Stableford only accepts 0–6 or P/\. Totals like 17/36/72 are ignored. Best Hole is capped at 6.</li>
                 </ol>
               </section>
