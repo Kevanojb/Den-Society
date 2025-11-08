@@ -32,6 +32,17 @@
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
       const to1 = x => Math.round((Number(x)||0)*10)/10;
 
+      // Split full name -> First/Last for Squabbit
+      function splitFirstLast(fullName){
+        const raw=(fullName||'').trim().replace(/\s+/g,' ');
+        if(!raw) return {first:'', last:''};
+        const parts=raw.split(' ');
+        if(parts.length===1) return {first:parts[0], last:''};
+        const last=parts.pop();
+        const first=parts.join(' ');
+        return {first,last};
+      }
+
       // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
       function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
@@ -128,7 +139,7 @@
         return { men: detected||null, women: detected||null };
       }
 
-      // STRICT Stableford per-hole reader: only 0..6 and P or "\" → 0; ignore 17/36/72 etc.
+      // STRICT Stableford per-hole reader
       function readStablefordPerHole(row) {
         var start = -1;
         for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
@@ -234,7 +245,7 @@
             name:p.name,
             gender:p.gender,
             handicap:p.handicap,
-            points: totals[p.name]||0,
+            points: (totals[p.name]||0),
             back9: holeData[p.name] ? holeData[p.name].back9 : 0,
             perHole: holeData[p.name] ? holeData[p.name].perHole : []
           }))
@@ -412,11 +423,11 @@
           for(const r of computed){
             if(isTeamLike(r.name)) continue;
             const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
-            const eventPerHole = (r.perHole||[]).map(v=>Math.max(0, Math.min(6, Number(v)||0))); // clamp 0..6
+            const eventPerHole = (r.perHole||[]).map(v=>Math.max(0, Math.min(6, Number(v)||0)));
             const bestPerHole = Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0, eventPerHole[i]||0));
             const eclecticTotal = bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
             const nextBestEvent = Math.max(prev.bestEventPoints||0, r.points||0);
-            const nextBestHole  = Math.max(prev.bestHolePoints || 0, Math.max(0,...eventPerHole)); // cap already applied
+            const nextBestHole  = Math.max(prev.bestHolePoints || 0, Math.max(0,...eventPerHole));
 
             next[r.name] = {
               name:r.name,
@@ -448,7 +459,7 @@
           }
         }
 
-        // ---------- Ratings (THIS EVENT ONLY; no Supabase writes) ----------
+        // ---------- Ratings (THIS EVENT ONLY) ----------
         const ratings = useMemo(()=>{
           const out=[];
           for(let i=0;i<players.length;i++){
@@ -460,7 +471,6 @@
               name:p.name,
               p3:to1(p3), p4:to1(p4), p5:to1(p5),
               r3:ratingLabel(p3), r4:ratingLabel(p4), r5:ratingLabel(p5),
-              c3:ratingColor(p3), c4:ratingColor(p4), c5:ratingColor(p5),
               total:(p3+p4+p5)
             });
           }
@@ -492,10 +502,26 @@
           };
         },[players, effectiveMen, effectiveWomen]);
 
+        // NEW: Export Squabbit (First, Last, Handicap) using nextPlaying
+        function exportSquabbitHandicaps(){
+          if(!computed.length) return;
+          const rows=[["First","Last","Handicap"]];
+          computed
+            .filter(r=>r && r.name && !isTeamLike(r.name))
+            .forEach(r=>{
+              const { first, last } = splitFirstLast(r.name);
+              const h = Number.isFinite(r.nextPlaying)
+                ? r.nextPlaying.toFixed(1)
+                : (Number.isFinite(r.startExact) ? Number(r.startExact).toFixed(1) : "0.0");
+              rows.push([first, last, h]);
+            });
+          downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
+        }
+
         // ---------- UI helpers ----------
         const chip = label => <span className="chip mono">{label}</span>;
 
-        // ---------- Derived views for season tables (sorted) ----------
+        // ---------- Derived views ----------
         const seasonSortedByPoints = useMemo(()=>{
           return Object.values(season)
             .filter(r=>!isTeamLike(r.name))
@@ -526,13 +552,36 @@
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
                   <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-                  <button onClick={()=>downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
-                    [["Event",eventName,"Date",dateStr],[],
-                     ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-                     ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
-                    ])}
+
+                  <button
+                    onClick={() =>
+                      downloadCSV(
+                        `DenSociety_${dateStr.replace(/-/g, '')}.csv`,
+                        [
+                          ["Event", eventName, "Date", dateStr],
+                          [],
+                          ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
+                          ...computed.map(r=>[
+                            r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying
+                          ])
+                        ]
+                      )
+                    }
                     className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40"
-                    disabled={!players.length}>Export Event CSV</button>
+                    disabled={!players.length}
+                  >
+                    Export Event CSV
+                  </button>
+
+                  {/* NEW BUTTON (JSX comment) */}
+                  <button
+                    onClick={exportSquabbitHandicaps}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white disabled:opacity-40"
+                    disabled={!players.length}
+                    title="Exports First, Last, Handicap for Squabbit"
+                  >
+                    Export to Squabbit (Handicaps)
+                  </button>
                 </div>
               </header>
 
@@ -594,7 +643,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Countback uses Back-9 from the detailed card.</p>
               </section>
 
-              {/* Season standings (sorted desc by Total Points) */}
+              {/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
@@ -633,7 +682,7 @@
                 </div>
               </section>
 
-              {/* Eclectic leaderboard (STRICTLY SORTED by Eclectic Total desc, then name) */}
+              {/* Eclectic leaderboard */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
@@ -671,7 +720,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events. Table is sorted by Eclectic Total (desc), then Name (asc).</p>
               </section>
 
-              {/* Ratings — with MEN/WOMEN pars shown at the top */}
+              {/* Ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
@@ -682,21 +731,20 @@
                       const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
-                      ratings.forEach(r=>rows.push([r.name, r.p3, r.r3, r.p4, r.r4, r.p5, r.r5]));
+                      ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
                       downloadCSV(`DenSociety_EventRatings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`, rows);
                     }}
                   >Export Ratings</button>
                 </div>
 
-                {/* Pars shown explicitly */}
                 <div className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                   <div className="mono text-sm overflow-auto">
                     <div className="flex items-center gap-2 mb-1">
-                      {chip("Men")} <span>{effectiveMen.join(', ')}</span>
+                      <span className="chip mono">Men</span> <span>{effectiveMen.join(', ')}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {chip("Women")} <span>{effectiveWomen.join(', ')}</span>
+                      <span className="chip mono">Women</span> <span>{effectiveWomen.join(', ')}</span>
                     </div>
                   </div>
                 </div>
@@ -715,9 +763,9 @@
                       {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
                           <td className="font-medium">{r.name}</td>
-                          <td>{r.p3.toFixed(1)}</td><td className={r.c3}>{r.r3}</td>
-                          <td>{r.p4.toFixed(1)}</td><td className={r.c4}>{r.r4}</td>
-                          <td>{r.p5.toFixed(1)}</td><td className={r.c5}>{r.r5}</td>
+                          <td>{r.p3.toFixed(1)}</td><td>{ratingLabel(r.p3)}</td>
+                          <td>{r.p4.toFixed(1)}</td><td>{ratingLabel(r.p4)}</td>
+                          <td>{r.p5.toFixed(1)}</td><td>{ratingLabel(r.p5)}</td>
                         </tr>
                       ))}
                       {!ratings.length && (
@@ -728,7 +776,7 @@
                 </div>
               </section>
 
-              {/* Owner-only: Course pars input for ratings */}
+              {/* Owner-only: Course pars input */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Course Setup — Pars for Ratings</h2>
                 <p className="text-sm text-neutral-600 mb-2">
@@ -768,8 +816,8 @@
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
                   <li>Import a Squabbit CSV. Pars are auto-detected (single Par row with Out/In/Total or two 9-hole rows).</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
-                  <li>Ratings use Men/Women pars per player (Women’s tee/Ladies → Women).</li>
-                  <li>Per-hole Stableford only accepts 0–6 or P/\. Totals like 17/36/72 are ignored. Best Hole is capped at 6.</li>
+                  <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap CSV ready for Squabbit.</li>
+                  <li>Toggle Owner Mode (Ctrl+Alt+O) to show Supabase settings.</li>
                 </ol>
               </section>
 
