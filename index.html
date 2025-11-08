@@ -1,4 +1,4 @@
-!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -8,11 +8,15 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+
+    <!-- Use jsDelivr for supabase-js (more reliable on some networks) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
     <style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}</style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
+
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
       const { useMemo, useState, useEffect } = React;
@@ -43,7 +47,7 @@
           }
         }
 
-        // 2) Stableford (summary) totals
+        // 2) Stableford totals
         const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
         const totals={};
         if(stablefordSectionRow>=0){
@@ -55,9 +59,7 @@
           }
         }
 
-        // 3) Per-hole Stableford from detailed card:
-        // Row i:  A=name
-        // Row i+1: B='Stableford', C=Handicap, D–L=H1–H9, M=Out, N–V=H10–H18, W=In, X=Total
+        // 3) Per-hole Stableford from detailed card
         const holeData={};
         const getNum = (x) => {
           const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
@@ -68,8 +70,8 @@
           for(let i=0;i<lines.length-1;i++){
             if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
               const st=lines[i+1]||[];
-              const front9 = st.slice(3,12).map(getNum);   // D..L (9 holes)
-              const back9H = st.slice(13,22).map(getNum);  // N..V (9 holes)
+              const front9 = st.slice(3,12).map(getNum);   // D..L
+              const back9H = st.slice(13,22).map(getNum);  // N..V
               const perHole = [...front9, ...back9H];
               const back9 = back9H.reduce((a,b)=>a+b,0);
               const maxHole = perHole.length ? Math.max(...perHole) : 0;
@@ -95,26 +97,147 @@
         const eclecticTotal=bestPerHole.reduce((s,v)=>s+(isFinite(v)?v:0),0);
         return {bestPerHole,eclecticTotal};
       }
-      function makeSupabaseClient(url,key){ try{ if(!url||!key) return null; return supabase.createClient(url,key);}catch(e){ console.warn("Supabase client failed",e); return null;}}
+
+      // ---------- Supabase helpers ----------
+      function normalizeUrl(u){
+        if(!u) return '';
+        let s = String(u).trim();
+        s = s.replace(/\/+$/,''); // drop trailing slash
+        if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
+        try{
+          const url = new URL(s);
+          return `https://${url.host}`;
+        }catch{
+          return '';
+        }
+      }
+      function cleanKey(k){
+        if(!k) return '';
+        return String(k).replace(/[^\x20-\x7E]/g,'').trim();
+      }
+      function jwtRefFromKey(k){
+        try{
+          const parts = k.split('.');
+          if(parts.length < 2) return null;
+          const b64 = parts[1].replace(/-/g,'+').replace(/_/g,'/');
+          const json = atob(b64);
+          const payload = JSON.parse(json);
+          return payload?.ref || null;
+        }catch{ return null; }
+      }
+      function makeSupabaseClient(url, key){
+        const u = normalizeUrl(url);
+        const k = cleanKey(key);
+        if(!u || !k) return null;
+
+        // NEW: explicit SDK presence check with precise error
+        if(!(window.supabase && window.supabase.createClient)){
+          throw new Error('supabase-js SDK did not load');
+        }
+        return window.supabase.createClient(u, k, { auth: { persistSession:false }});
+      }
+      async function probe(client){
+        try{
+          const { error, status } = await client
+            .from('season_standings')
+            .select('*', { head:false })
+            .limit(1);
+          if(error) return { ok:false, status, msg:error.message };
+          return { ok:true, status:200, msg:'Connected' };
+        }catch(e){
+          return { ok:false, status:0, msg:String(e?.message||e) };
+        }
+      }
+      function mask(s, showStart=6, showEnd=4){
+        if(!s) return '';
+        if(s.length <= showStart + showEnd) return s;
+        return s.slice(0,showStart) + '…' + s.slice(-showEnd);
+      }
 
       function App(){
         const [players,setPlayers]=useState([]);
         const [eventName,setEventName]=useState("Den Society Meeting");
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
         const [season,setSeason]=useState({});
-        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||'');
-        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||'');
-        const [client,setClient]=useState(makeSupabaseClient(supaURL,supaKEY));
-        const connected=!!client;
+        const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        async function saveSupa(){ localStorage.setItem('supa_url',supaURL.trim()); localStorage.setItem('supa_key',supaKEY.trim()); setClient(makeSupabaseClient(supaURL.trim(),supaKEY.trim())); }
+        // Defaults (yours)
+        const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
+        const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+
+        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
+        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
+
+        const [client,setClient] = useState(()=>{
+          try{
+            return makeSupabaseClient(
+              localStorage.getItem('supa_url') || defaultURL,
+              localStorage.getItem('supa_key') || defaultKEY
+            );
+          }catch(e){
+            console.warn(e);
+            if(String(e?.message||'').includes('SDK did not load')){
+              // surface clear message on first paint
+              setTimeout(()=>setStatusMsg('Error: supabase-js SDK failed to load'), 0);
+            }
+            return null;
+          }
+        });
+
+        const connected = statusMsg.startsWith('Connected');
+
+        async function saveSupa(){
+          const rawU = (supaURL || '').trim();
+          const rawK = (supaKEY || '').trim();
+          const u = normalizeUrl(rawU || defaultURL);
+          const k = cleanKey(rawK || defaultKEY);
+
+          localStorage.setItem('supa_url', u);
+          localStorage.setItem('supa_key', k);
+
+          let c = null;
+          try{
+            c = makeSupabaseClient(u, k);
+          }catch(e){
+            setStatusMsg(
+              String(e?.message||'').includes('SDK did not load')
+                ? 'Error: supabase-js SDK failed to load'
+                : `Error: ${String(e?.message||e)}`
+            );
+          }
+          setClient(c);
+          if(!c){
+            if(statusMsg.indexOf('SDK failed to load') === -1){
+              setStatusMsg('Invalid URL or key (SDK missing or fields empty)');
+            }
+            return;
+          }
+
+          const ref = jwtRefFromKey(k);
+          const subdomain = (u.match(/^https:\/\/([^\.]+)/i) || [,''])[1];
+          if(ref && subdomain && ref !== subdomain){
+            setStatusMsg(`Warning: key is for "${ref}" but URL is "${subdomain}". Trying anyway…`);
+          } else {
+            setStatusMsg('Checking connection…');
+          }
+
+          const res = await probe(c);
+          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
+        }
+
         async function fetchSeason(){
-          if(!client) return;
-          const {data,error}=await client.from('season_standings')
+          if(!client){ setStatusMsg('Not connected'); return; }
+          const { data, error } = await client.from('season_standings')
             .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(error){console.warn('Supabase fetch error',error);return;}
+          if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase fetch error',error); return; }
+          setStatusMsg('Connected');
           const map={};
           (data||[]).forEach(r=>{
+            const bph = Array.isArray(r.best_per_hole)
+              ? r.best_per_hole
+              : (typeof r.best_per_hole === 'string'
+                  ? (JSON.parse(r.best_per_hole||'[]')||[])
+                  : []);
             map[r.name]={
               name:r.name,
               totalPoints:r.total_points||0,
@@ -122,12 +245,18 @@
               bestEventPoints:r.best_event_points??0,
               bestHolePoints:r.best_hole_points??0,
               eclecticTotal:r.eclectic_total??0,
-              bestPerHole:Array.isArray(r.best_per_hole)?r.best_per_hole:(typeof r.best_per_hole==='string'?JSON.parse(r.best_per_hole||'[]'):[])
+              bestPerHole:Array.isArray(bph)?bph.map(n=>Number(n)||0):Array(18).fill(0)
             };
           });
           setSeason(map);
         }
-        useEffect(()=>{ fetchSeason(); },[client]);
+
+        useEffect(()=>{ (async()=>{
+          if(!client) return;
+          const res = await probe(client);
+          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
+          if(res.ok) await fetchSeason();
+        })(); }, [client]);
 
         async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
 
@@ -136,7 +265,6 @@
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length){setComputed([]);return;}
-          // Tie groups by total points; each tied group gets the highest available slot points
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
@@ -167,18 +295,20 @@
             next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, bestPerHole, eclecticTotal };
           }
           setSeason(next);
+
           if(client){
             const rows=Object.values(next).map(r=>({
               name:r.name,
-              total_points:r.totalPoints,
-              events:r.events,
-              best_event_points:r.bestEventPoints??0,
-              best_hole_points:r.bestHolePoints??0,
-              eclectic_total:r.eclecticTotal??0,
-              best_per_hole:(r.bestPerHole??Array(18).fill(0)),
+              total_points: r.totalPoints|0,
+              events: r.events|0,
+              best_event_points: r.bestEventPoints|0,
+              best_hole_points: r.bestHolePoints|0,
+              eclectic_total: r.eclecticTotal|0,
+              best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
             }));
-            const {error}=await client.from('season_standings').upsert(rows,{onConflict:'name'});
-            if(error) console.warn('Supabase upsert error',error);
+            const { error } = await client.from('season_standings').upsert(rows, { onConflict:'name' });
+            if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase upsert error', error); }
+            else { setStatusMsg('Connected'); }
           }
         }
 
@@ -189,7 +319,6 @@
           ];
           downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function exportStandings(){
           const list=Object.values(season).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
           const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
@@ -197,7 +326,6 @@
           ];
           downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function exportEclecticCSV(){
           const list=Object.values(season).sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
           const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
@@ -206,16 +334,29 @@
           ];
           downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
         }
-
         function resetSeason(){ setSeason({}); }
+
+        function DebugStatus(){
+          const u = (localStorage.getItem('supa_url')||'').toString();
+          const k = (localStorage.getItem('supa_key')||'').toString();
+          const sdkOk = !!(window.supabase && window.supabase.createClient);
+          return (
+            <p className="text-xs text-neutral-500 mt-1">
+              Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code> · SDK: <code>{sdkOk?'loaded':'MISSING'}</code>
+            </p>
+          );
+        }
 
         return (
           <div className="min-h-screen p-4 sm:p-6 md:p-8">
             <div className="max-w-6xl mx-auto space-y-6">
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
                 <div>
-                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic (Static)</h1>
-                  <p className="text-sm text-neutral-600">{connected ? 'Supabase: configured (via Settings)' : 'Supabase: not configured — local only'}</p>
+                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
+                  <p className="text-sm" style={{color: connected ? '#059669' : '#dc2626'}}>
+                    Supabase: {statusMsg}
+                  </p>
+                  <DebugStatus />
                 </div>
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
@@ -233,16 +374,16 @@
                     <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="https://xxxx.supabase.co" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm block mb-1">Supabase anon (publishable) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="sb_..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="eyJ..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
                   </div>
                 </div>
                 <div className="mt-3 flex gap-2">
                   <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
+                  <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); setStatusMsg('Not connected'); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
                   <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Tip: Leave blank if you don't want cloud storage. You can still import and export locally.</p>
+                <p className="text-xs text-neutral-500 mt-2">Tip: Serve this file via a local server if you see CORS or SDK blocked, e.g. <code>python -m http.server</code></p>
               </section>
 
               {/* Import + Event table */}
@@ -276,7 +417,7 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot (e.g., joint 2nd both get 17; next is 4th).</p>
+                <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot.</p>
               </section>
 
               {/* League standings */}
@@ -284,8 +425,8 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
                   <div className="flex gap-2">
-                    <button onClick={exportStandings} className="px-3 py-2 rounded-xl bg-black text-white">Export Standings</button>
-                    <button onClick={resetSeason} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Reset Season (local)</button>
+                    <button onClick={exportStandings} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
+                    <button onClick={resetSeason} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700">Reset Season (local)</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -317,7 +458,7 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
                   <div className="flex gap-2">
-                    <button onClick={exportEclecticCSV} className="px-3 py-2 rounded-xl bg-black text-white">Export Eclectic CSV</button>
+                    <button onClick={exportEclecticCSV} className="px-3 py-2 rounded-2xl bg-black text-white">Export Eclectic CSV</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -349,7 +490,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Optional: enter your Supabase URL & anon key in <strong>Settings</strong> and click <strong>Save & Connect</strong>.</li>
+                  <li>Enter your Supabase URL & anon key in <strong>Settings</strong> and click <strong>Save & Connect</strong>.</li>
                   <li>Click <strong>Import CSV</strong> and choose your Squabbit export.</li>
                   <li>Click <strong>Add Event → Season</strong> to update the league & eclectic.</li>
                   <li>Use the Export buttons for CSVs.</li>
@@ -365,3 +506,4 @@
     </script>
   </body>
 </html>
+
