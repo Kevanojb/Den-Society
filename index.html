@@ -3,268 +3,415 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Den Society — League & Eclectic</title>
+    <title>Den Society — League, Eclectic & Event Ratings</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Use jsDelivr for supabase-js (more reliable on some networks) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-
-    <style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}</style>
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+      .owner-only{display:none;}
+      .owner-on .owner-only{display:block;}
+      .mono{font-variant-numeric:tabular-nums}
+    </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
-      const { useMemo, useState, useEffect } = React;
+      const { useMemo, useState, useEffect, useRef } = React;
+
+      // ---------- Small utils ----------
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
       const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
       const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
+      const to1 = x => Math.round((Number(x)||0)*10)/10;
 
+      // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
       function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
       function cutPerPointOver34(h){ const r=rangeForHcap(h); return r==="0-9"?0.5:r==="10-18"?1:r==="19-28"?1:1.5; }
       function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
-      function computeNewExactHandicap(start,g,pts,b9,w){ const startPlay=Math.round(start); let exact=start; if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} if(w) exact-=winnerBonusCut(startPlay); const max=playingCapByGender(g); const bounded=clamp(exact,0,60); const nextPlay=clamp(Math.round(bounded),0,max); return {nextExact:bounded,nextPlaying:nextPlay}; }
-
-      function parseSquabbitCSV(text){
-        const rows=text.replace(/\r/g,'').split('\n');
-        const lines=rows.map(raw=>{ const d=raw.includes('\t')?'\t':','; return raw.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim()); });
-
-        // 1) Players table
-        const playerHeaderRow=lines.findIndex(r=>(r[0]||'')==='Name'&&(r[1]||'')==='Hdcp');
-        const players=[];
-        if(playerHeaderRow>=0){
-          for(let i=playerHeaderRow+1;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            const hcap=parseFloat((lines[i][1]||'').trim());
-            if(!name) break;
-            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
-          }
-        }
-
-        // 2) Stableford totals
-        const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
-        const totals={};
-        if(stablefordSectionRow>=0){
-          for(let i=stablefordSectionRow+2;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            if(!name) break;
-            const r1=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(r1)) totals[name]=r1;
-          }
-        }
-
-        // 3) Per-hole Stableford from detailed card
-        const holeData={};
-        const getNum = (x) => {
-          const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
-          return Number.isFinite(v) ? v : 0;
-        };
-
-        for(const p of players){
-          for(let i=0;i<lines.length-1;i++){
-            if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
-              const st=lines[i+1]||[];
-              const front9 = st.slice(3,12).map(getNum);   // D..L
-              const back9H = st.slice(13,22).map(getNum);  // N..V
-              const perHole = [...front9, ...back9H];
-              const back9 = back9H.reduce((a,b)=>a+b,0);
-              const maxHole = perHole.length ? Math.max(...perHole) : 0;
-              holeData[p.name]={perHole,back9,maxHole};
-              break;
-            }
-          }
-        }
-
-        return players.map(p=>({
-          name:p.name,
-          gender:p.gender,
-          handicap:p.handicap,
-          points:totals[p.name]||0,
-          back9:holeData[p.name]?.back9||0,
-          perHole:holeData[p.name]?.perHole||[],
-          eventMaxHole:holeData[p.name]?.maxHole||0
-        }));
+      function computeNewExactHandicap(start,g,pts,b9,w){
+        const startPlay=Math.round(start); let exact=start;
+        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
+        else if(pts<=31){ exact+=0.5*(32-pts);}
+        if(w) exact-=winnerBonusCut(startPlay);
+        const max=playingCapByGender(g);
+        const bounded=clamp(exact,0,60);
+        const nextPlay=clamp(Math.round(bounded),0,max);
+        return {nextExact:bounded,nextPlaying:nextPlay};
       }
 
-      function mergeEclectic(prev,currentPerHole){
-        const bestPerHole=Array.from({length:18},(_,i)=>Math.max(prev?.[i]??0,currentPerHole?.[i]??0));
-        const eclecticTotal=bestPerHole.reduce((s,v)=>s+(isFinite(v)?v:0),0);
-        return {bestPerHole,eclecticTotal};
-      }
+      // ---------- Name filters ----------
+      const isTeamLike = name =>
+        /^(team(\s*\d+)?)$/i.test(name||'') ||
+        /^team average$/i.test(name||'') ||
+        /^stableford$/i.test(name||'');
 
       // ---------- Supabase helpers ----------
       function normalizeUrl(u){
         if(!u) return '';
-        let s = String(u).trim();
-        s = s.replace(/\/+$/,''); // drop trailing slash
+        let s = String(u).trim().replace(/\/+$/,'');
         if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
-        try{
-          const url = new URL(s);
-          return `https://${url.host}`;
-        }catch{
-          return '';
-        }
+        try{ const url = new URL(s); return `https://${url.host}`; }catch{ return ''; }
       }
-      function cleanKey(k){
-        if(!k) return '';
-        return String(k).replace(/[^\x20-\x7E]/g,'').trim();
-      }
-      function jwtRefFromKey(k){
-        try{
-          const parts = k.split('.');
-          if(parts.length < 2) return null;
-          const b64 = parts[1].replace(/-/g,'+').replace(/_/g,'/');
-          const json = atob(b64);
-          const payload = JSON.parse(json);
-          return payload?.ref || null;
-        }catch{ return null; }
-      }
+      function cleanKey(k){ return (k||'').replace(/[^\x20-\x7E]/g,'').trim(); }
       function makeSupabaseClient(url, key){
-        const u = normalizeUrl(url);
-        const k = cleanKey(key);
+        const u = normalizeUrl(url), k = cleanKey(key);
         if(!u || !k) return null;
-
-        // NEW: explicit SDK presence check with precise error
-        if(!(window.supabase && window.supabase.createClient)){
-          throw new Error('supabase-js SDK did not load');
-        }
-        return window.supabase.createClient(u, k, { auth: { persistSession:false }});
+        if(!(window.supabase && window.supabase.createClient)) throw new Error('supabase-js SDK did not load');
+        return window.supabase.createClient(u, k, { auth:{ persistSession:false }});
       }
       async function probe(client){
         try{
-          const { error, status } = await client
-            .from('season_standings')
-            .select('*', { head:false })
-            .limit(1);
+          const { error, status } = await client.from('season_standings').select('*').limit(1);
           if(error) return { ok:false, status, msg:error.message };
           return { ok:true, status:200, msg:'Connected' };
-        }catch(e){
-          return { ok:false, status:0, msg:String(e?.message||e) };
+        }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
+      }
+      const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
+
+      // ---------- CSV parsing (robust) ----------
+      function detectDelimiter(text){
+        const lines = text.replace(/\r/g,'').split('\n').filter(Boolean).slice(0,30);
+        let comma=0, tab=0, semi=0;
+        for(const line of lines){
+          let inQ=false;
+          for(let i=0;i<line.length;i++){
+            const ch=line[i];
+            if(ch === '"'){ inQ = !inQ; }
+            else if(!inQ){
+              if(ch === ',') comma++;
+              else if(ch === '\t') tab++;
+              else if(ch === ';') semi++;
+            }
+          }
         }
+        // prefer tab, then comma, then semicolon
+        if(tab >= comma && tab >= semi) return '\t';
+        if(comma >= semi) return ',';
+        return ';';
       }
-      function mask(s, showStart=6, showEnd=4){
-        if(!s) return '';
-        if(s.length <= showStart + showEnd) return s;
-        return s.slice(0,showStart) + '…' + s.slice(-showEnd);
+      function parseCsvLine(line, delim){
+        const out=[]; let cur='', inQ=false;
+        for(let i=0;i<line.length;i++){
+          const ch=line[i];
+          if(ch === '"'){
+            if(inQ && line[i+1] === '"'){ cur+='"'; i++; }
+            else { inQ = !inQ; }
+          }else if(ch === delim && !inQ){
+            out.push(cur); cur='';
+          }else{
+            cur += ch;
+          }
+        }
+        out.push(cur);
+        return out.map(s => s.replace(/^\uFEFF/,'').replace(/\u00A0/g,' ').trim());
+      }
+      function splitSmartWhole(text){
+        const delim = detectDelimiter(text);
+        return text.replace(/\r/g,'').split('\n').map(l => parseCsvLine(l, delim));
       }
 
+      // ---------- Majority-vote par detection ----------
+      function detectParsFromLines(lines){
+        const only345 = arr => arr.filter(n => n===3 || n===4 || n===5);
+        const numsFromRow = row => row
+          .map(x => parseFloat(String(x||'').replace(/[^0-9.\-]/g,'')))
+          .filter(v => Number.isFinite(v));
+
+        const candidates = [];
+        for(let i=0;i<lines.length;i++){
+          const row = lines[i];
+          const hasPar = row.some(c => String(c).trim().toLowerCase() === 'par');
+          if(!hasPar) continue;
+
+          const nums = only345(numsFromRow(row));
+          if(nums.length >= 18){
+            candidates.push(nums.slice(0,18));
+            continue;
+          }
+          if(nums.length >= 8 && nums.length <= 10){
+            for(let j=i+1;j<Math.min(lines.length,i+8);j++){
+              const row2 = lines[j];
+              const hasPar2 = row2.some(c => String(c).trim().toLowerCase() === 'par');
+              if(!hasPar2) continue;
+              const nums2 = only345(numsFromRow(row2));
+              if(nums2.length >= 8 && nums2.length <= 10){
+                const joined = only345([...nums, ...nums2]).slice(0,18);
+                if(joined.length === 18) candidates.push(joined);
+              }
+            }
+          }
+        }
+
+        if(!candidates.length) return null;
+
+        // Vote per hole; tie → 4
+        const out = Array(18).fill(4);
+        for(let i=0;i<18;i++){
+          const votes = {3:0,4:0,5:0};
+          for(const c of candidates){
+            const v = c[i];
+            if(v===3||v===4||v===5) votes[v]++;
+          }
+          const choices = [4,3,5];
+          choices.sort((a,b)=> votes[b]-votes[a] || (a-b));
+          out[i] = choices[0];
+        }
+
+        // Nudge toward sum 72 if way off by flipping least-supported to 4
+        const sum = out.reduce((a,b)=>a+b,0);
+        if(Math.abs(sum-72) >= 4){
+          for(let pass=0; pass<18 && Math.abs(out.reduce((a,b)=>a+b,0)-72)>=1; pass++){
+            for(let i=0;i<18;i++){
+              if(out[i]!==4){
+                const votes4 = candidates.reduce((s,c)=> s + (c[i]===4?1:0), 0);
+                if(votes4>0){ out[i]=4; break; }
+              }
+            }
+          }
+        }
+        return out;
+      }
+
+      // ---------- Robust per-hole extraction ----------
+      function normCellToPoint(x){
+        const s = String(x ?? '').trim();
+        if(!s || s.toUpperCase()==='P') return 0;
+        const v = parseFloat(s.replace(/[^0-9.\-]/g,''));
+        if(!Number.isFinite(v)) return 0;
+        return Math.max(0, Math.min(6, v)); // clamp to sensible Stableford range
+      }
+      function extract18FromStablefordRow(row){
+        const idx = row.findIndex(c => String(c).trim().toLowerCase()==='stableford');
+        if(idx < 0) return null;
+        let i = idx + 1;
+
+        // Skip handicap if present (>4)
+        if(i < row.length){
+          const maybeHcap = parseFloat(String(row[i]).replace(/[^0-9.\-]/g,''));
+          if(Number.isFinite(maybeHcap) && Math.abs(maybeHcap) > 4) i++;
+        }
+
+        const out = [];
+        for(; i<row.length && out.length < 18; i++){
+          const s = String(row[i]).trim().toLowerCase();
+          if(!s || s==='out' || s==='in' || s==='total' || s==='front' || s==='back') continue;
+          const v = normCellToPoint(row[i]);
+          if(Number.isFinite(v)) out.push(v);
+        }
+        return out.length === 18 ? out : null;
+      }
+
+      // ---------- Parse Squabbit CSV ----------
+      function parseSquabbitCSV(text){
+        const lines = splitSmartWhole(text).filter(row => row.length && row.some(cell => cell !== ''));
+
+        const detectedPars = detectParsFromLines(lines);
+
+        // Players table
+        const playerHeaderRow = lines.findIndex(r=>(r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
+        const byName = new Map();
+
+        if(playerHeaderRow >= 0){
+          for(let i=playerHeaderRow+1;i<lines.length;i++){
+            const name=(lines[i][0]||'').trim();
+            if(!name) break;
+            if(isTeamLike(name)) continue;
+            const hcap=parseFloat((lines[i][1]||'').trim());
+            if(!Number.isNaN(hcap)){
+              if(!byName.has(name)){
+                byName.set(name,{ name, handicap:hcap, gender:'M', points:0, perHole:[] });
+              } else {
+                const prev = byName.get(name);
+                if(!Number.isFinite(prev.handicap) && Number.isFinite(hcap)) prev.handicap = hcap;
+              }
+            }
+          }
+        }
+
+        // Totals section ("Stableford" summary)
+        const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
+        if(stablefordSectionRow >= 0){
+          for(let i=stablefordSectionRow+2;i<lines.length;i++){
+            const name=(lines[i][0]||'').trim();
+            if(!name) break;
+            if(isTeamLike(name)) continue;
+            const r1=parseFloat((lines[i][1]||'').trim());
+            if(!Number.isNaN(r1)){
+              if(!byName.has(name)){
+                byName.set(name,{ name, handicap:NaN, gender:'M', points:r1, perHole:[] });
+              } else {
+                byName.get(name).points = r1;
+              }
+            }
+          }
+        }
+
+        // Per-hole stableford from detailed card (robust)
+        for(const [name, rec] of byName){
+          let best = null;
+          let bestSum = -1;
+          const targetTotal = Number.isFinite(rec.points) ? rec.points : null;
+
+          for(let i=0;i<lines.length;i++){
+            if((lines[i]?.[0]||'').trim() !== name) continue;
+
+            for(let j=i+1; j<=i+6 && j<lines.length; j++){
+              const row = lines[j] || [];
+              const hasStableford = row.some(c => String(c).trim().toLowerCase() === 'stableford');
+              if(!hasStableford) continue;
+
+              const perHole = extract18FromStablefordRow(row);
+              if(!perHole) continue;
+
+              const sum = perHole.reduce((a,b)=>a+(Number(b)||0),0);
+
+              if(targetTotal != null && sum === targetTotal){
+                best = perHole; bestSum = sum; break;
+              }
+              if(sum > bestSum){
+                best = perHole; bestSum = sum;
+              }
+            }
+            if(best) break;
+          }
+          rec.perHole = Array.isArray(best) ? best : [];
+        }
+
+        const outPlayers = Array.from(byName.values()).filter(p=>!isTeamLike(p.name));
+        return { players: outPlayers, detectedPars };
+      }
+
+      // ---------- Ratings (per event) ----------
+      const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
+      const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
+
+      function eventParAverages(perHole, pars){
+        let sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
+        for(let i=0;i<Math.min(18, perHole.length); i++){
+          const pts = Number(perHole[i])||0;
+          const par = Number(pars[i])||4;
+          if(sums[par]){sums[par].s+=pts; sums[par].c++;}
+        }
+        const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
+        return {p3:avg(3),p4:avg(4),p5:avg(5)};
+      }
+
+      // ---------- App ----------
       function App(){
-        const [players,setPlayers]=useState([]);
-        const [eventName,setEventName]=useState("Den Society Meeting");
-        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
-        const [season,setSeason]=useState({});
-        const [statusMsg,setStatusMsg]=useState('Not connected');
+        // Owner Mode toggle (long-press title or Ctrl+Alt+O)
+        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
+        const pressTimer = useRef(null);
+        const startPress = ()=>{ pressTimer.current=setTimeout(()=>{ const next=!ownerMode; setOwnerMode(next); if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); }, 1200); };
+        const cancelPress = ()=>{ if(pressTimer.current){ clearTimeout(pressTimer.current); pressTimer.current=null; } };
+        useEffect(()=>{ if(ownerMode) document.documentElement.classList.add('owner-on'); else document.documentElement.classList.remove('owner-on'); },[ownerMode]);
+        useEffect(()=>{
+          const onKey=(e)=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const next=!ownerMode; setOwnerMode(next); if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } };
+          window.addEventListener('keydown', onKey);
+          return ()=>window.removeEventListener('keydown', onKey);
+        },[ownerMode]);
 
-        // Defaults (yours)
-        const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+        // Supabase (owner-only)
+        const defaultURL = ""; // leave blank; set in Owner Mode
+        const defaultKEY = ""; // leave blank; set in Owner Mode
 
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
+        const [client,setClient]=useState(null);
+        const [statusMsg,setStatusMsg]=useState('Not connected');
+        const [useCloudSeason,setUseCloudSeason] = useState(true);
 
-        const [client,setClient] = useState(()=>{
-          try{
-            return makeSupabaseClient(
-              localStorage.getItem('supa_url') || defaultURL,
-              localStorage.getItem('supa_key') || defaultKEY
-            );
-          }catch(e){
-            console.warn(e);
-            if(String(e?.message||'').includes('SDK did not load')){
-              // surface clear message on first paint
-              setTimeout(()=>setStatusMsg('Error: supabase-js SDK failed to load'), 0);
-            }
-            return null;
+        useEffect(()=>{
+          let cancelled=false;
+          async function boot(){
+            try{
+              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot, 600); return; }
+              const u = normalizeUrl(localStorage.getItem('supa_url')||defaultURL);
+              const k = cleanKey(localStorage.getItem('supa_key')||defaultKEY);
+              if(!u || !k){ setStatusMsg('Not connected'); return; }
+              const c = makeSupabaseClient(u,k);
+              if(!c){ setStatusMsg('Invalid URL or key'); return; }
+              if(cancelled) return;
+              setClient(c);
+              const res = await probe(c);
+              if(cancelled) return;
+              setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
+              if(res.ok && useCloudSeason) await fetchSeasonWith(c);
+            }catch(e){ if(!cancelled) setStatusMsg(`Error: ${String(e?.message||e)}`); }
           }
-        });
-
-        const connected = statusMsg.startsWith('Connected');
+          boot();
+          return ()=>{ cancelled=true; };
+        },[useCloudSeason]);
 
         async function saveSupa(){
-          const rawU = (supaURL || '').trim();
-          const rawK = (supaKEY || '').trim();
-          const u = normalizeUrl(rawU || defaultURL);
-          const k = cleanKey(rawK || defaultKEY);
-
-          localStorage.setItem('supa_url', u);
-          localStorage.setItem('supa_key', k);
-
-          let c = null;
+          const u = normalizeUrl((supaURL||'').trim());
+          const k = cleanKey((supaKEY||'').trim());
+          localStorage.setItem('supa_url', u||'');
+          localStorage.setItem('supa_key', k||'');
+          if(!u || !k){ setStatusMsg('Not connected'); setClient(null); return; }
+          setStatusMsg('Checking connection…');
           try{
-            c = makeSupabaseClient(u, k);
-          }catch(e){
-            setStatusMsg(
-              String(e?.message||'').includes('SDK did not load')
-                ? 'Error: supabase-js SDK failed to load'
-                : `Error: ${String(e?.message||e)}`
-            );
-          }
-          setClient(c);
-          if(!c){
-            if(statusMsg.indexOf('SDK failed to load') === -1){
-              setStatusMsg('Invalid URL or key (SDK missing or fields empty)');
-            }
-            return;
-          }
-
-          const ref = jwtRefFromKey(k);
-          const subdomain = (u.match(/^https:\/\/([^\.]+)/i) || [,''])[1];
-          if(ref && subdomain && ref !== subdomain){
-            setStatusMsg(`Warning: key is for "${ref}" but URL is "${subdomain}". Trying anyway…`);
-          } else {
-            setStatusMsg('Checking connection…');
-          }
-
-          const res = await probe(c);
-          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
+            const c = makeSupabaseClient(u,k);
+            setClient(c);
+            const res = await probe(c);
+            setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
+            if(res.ok && useCloudSeason) await fetchSeasonWith(c);
+          }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
         }
 
-        async function fetchSeason(){
-          if(!client){ setStatusMsg('Not connected'); return; }
-          const { data, error } = await client.from('season_standings')
-            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase fetch error',error); return; }
-          setStatusMsg('Connected');
-          const map={};
-          (data||[]).forEach(r=>{
-            const bph = Array.isArray(r.best_per_hole)
-              ? r.best_per_hole
-              : (typeof r.best_per_hole === 'string'
-                  ? (JSON.parse(r.best_per_hole||'[]')||[])
-                  : []);
-            map[r.name]={
-              name:r.name,
-              totalPoints:r.total_points||0,
-              events:r.events||0,
-              bestEventPoints:r.best_event_points??0,
-              bestHolePoints:r.best_hole_points??0,
-              eclecticTotal:r.eclectic_total??0,
-              bestPerHole:Array.isArray(bph)?bph.map(n=>Number(n)||0):Array(18).fill(0)
-            };
-          });
-          setSeason(map);
+        // Event + season data
+        const [eventName,setEventName]=useState("Den Society Meeting");
+        const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
+        const [players,setPlayers]=useState([]);
+        const [season,setSeason]=useState({});
+
+        // Pars (auto + override)
+        const [autoPars,setAutoPars]=useState(null);
+        const [overridePars,setOverridePars]=useState('');
+        const coursePars = useMemo(()=>{
+          if(overridePars){
+            try{
+              const arr = overridePars.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite);
+              if(arr.length===18) return arr;
+            }catch{}
+          }
+          return autoPars || [4,4,3,4,5,4,3,4,4, 4,3,5,4,4,4,5,3,4]; // sensible default
+        },[autoPars,overridePars]);
+
+        const holeDebug = useMemo(()=>{
+          const holes={3:[],4:[],5:[]};
+          (coursePars||[]).forEach((p,i)=>{ if([3,4,5].includes(p)) holes[p].push(i+1); });
+          return holes;
+        },[coursePars]);
+
+        async function importCSV(file){
+          const text = await file.text();
+          const parsed = parseSquabbitCSV(text);
+          setPlayers(parsed.players||[]);
+          setAutoPars(parsed.detectedPars||null);
         }
 
-        useEffect(()=>{ (async()=>{
-          if(!client) return;
-          const res = await probe(client);
-          setStatusMsg(res.ok ? 'Connected' : `Error ${res.status}: ${res.msg}`);
-          if(res.ok) await fetchSeason();
-        })(); }, [client]);
+        function resetEvent(){
+          setPlayers([]);
+          setAutoPars(null);
+          setOverridePars('');
+        }
+        function resetSeasonLocal(){
+          setSeason({});
+        }
 
-        async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
-
-        const [computed,setComputed]=useState([]);
-        useMemo(()=>{
-          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
-          if(!base.length){setComputed([]);return;}
+        // Compute event positions/points/next HCP
+        const computed = useMemo(()=>{
+          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,perHole:p.perHole}));
+          const base=[...rows].sort((a,b)=>(b.points-a.points));
+          if(!base.length) return [];
+          // tie groups by total points
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
@@ -277,96 +424,144 @@
             const ptsValue=POINTS_TABLE[start-1]||0;
             for(const i of g){
               const r=rows.find(x=>x.idx===i);
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
-              out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
+              const back9 = (r.perHole||[]).slice(9,18).reduce((a,b)=>a+(Number(b)||0),0);
+              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,back9,i===winnerIdx);
+              out.push({...r,back9,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
             }
             pos+=g.length;
           }
-          setComputed(out.sort((a,b)=>a.position-b.position));
+          out.sort((a,b)=> (a.position-b.position) || (b.back9-a.back9));
+          return out;
         },[players]);
+
+        // Supabase fetch & upsert
+        async function fetchSeasonWith(c){
+          if(!useCloudSeason) return;
+          const { data, error } = await c.from('season_standings')
+            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+          if(error){ setStatusMsg(`Error: ${error.message}`); return; }
+          const map={};
+          (data||[]).forEach(r=>{
+            if(!r || !r.name || isTeamLike(r.name)) return;
+            const bph = Array.isArray(r.best_per_hole)
+              ? r.best_per_hole
+              : (typeof r.best_per_hole==='string' ? (JSON.parse(r.best_per_hole||'[]')||[]) : []);
+            map[r.name]={
+              name:r.name,
+              totalPoints:r.total_points||0,
+              events:r.events||0,
+              bestEventPoints:r.best_event_points??0,
+              bestHolePoints:r.best_hole_points??0,
+              eclecticTotal:r.eclectic_total??0,
+              bestPerHole:(bph||[]).map(n=>Number(n)||0)
+            };
+          });
+          setSeason(map);
+        }
 
         async function addEventToSeason(){
           const next={...season};
           for(const r of computed){
+            if(isTeamLike(r.name)) continue;
             const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
-            const {bestPerHole,eclecticTotal}=mergeEclectic(prev.bestPerHole,r.perHole||[]);
-            const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
-            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max(0,...(r.perHole||[])));
-            next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, bestPerHole, eclecticTotal };
+            const bestPerHole = Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0, (r.perHole||[])[i]||0));
+            const eclecticTotal = bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
+            const nextBestEvent = Math.max(prev.bestEventPoints||0, r.points||0);
+            const nextBestHole  = Math.max(prev.bestHolePoints||0, Math.max(0,...(r.perHole||[])));
+            next[r.name] = {
+              name:r.name,
+              totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0),
+              events:(prev.events||0)+1,
+              bestEventPoints:nextBestEvent,
+              bestHolePoints:nextBestHole,
+              eclecticTotal,
+              bestPerHole
+            };
           }
           setSeason(next);
 
           if(client){
-            const rows=Object.values(next).map(r=>({
-              name:r.name,
-              total_points: r.totalPoints|0,
-              events: r.events|0,
-              best_event_points: r.bestEventPoints|0,
-              best_hole_points: r.bestHolePoints|0,
-              eclectic_total: r.eclecticTotal|0,
-              best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
-            }));
-            const { error } = await client.from('season_standings').upsert(rows, { onConflict:'name' });
-            if(error){ setStatusMsg(`Error: ${error.message}`); console.warn('Supabase upsert error', error); }
+            const rows=Object.values(next)
+              .filter(r=>!isTeamLike(r.name))
+              .map(r=>({
+                name:r.name,
+                total_points:r.totalPoints|0,
+                events:r.events|0,
+                best_event_points:r.bestEventPoints|0,
+                best_hole_points:r.bestHolePoints|0,
+                eclectic_total:r.eclecticTotal|0,
+                best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
+              }));
+            const { error } = await client.from('season_standings').upsert(rows,{ onConflict:'name' });
+            if(error){ setStatusMsg(`Error: ${error.message}`); }
             else { setStatusMsg('Connected'); }
           }
         }
 
-        function exportEvent(){
-          const rows=[["Event",eventName,"Date",dateStr],[],
-            ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-            ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])
-          ];
-          downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function exportStandings(){
-          const list=Object.values(season).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
-          const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-            ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])
-          ];
-          downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function exportEclecticCSV(){
-          const list=Object.values(season).sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
-          const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
-          const rows=[header,
-            ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
-          ];
-          downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
-        }
-        function resetSeason(){ setSeason({}); }
+        // ---------- Per-event ratings ----------
+        const ratings = useMemo(()=>{
+          const out=[];
+          for(const p of players){
+            if(isTeamLike(p.name)) continue;
+            const {p3,p4,p5}=eventParAverages(p.perHole||[], coursePars);
+            out.push({
+              name:p.name,
+              p3:to1(p3), p4:to1(p4), p5:to1(p5),
+              r3:ratingLabel(p3), r4:ratingLabel(p4), r5:ratingLabel(p5),
+              c3:ratingColor(p3), c4:ratingColor(p4), c5:ratingColor(p5),
+              total:(p3+p4+p5)
+            });
+          }
+          out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
+          return out;
+        },[players, coursePars]);
 
-        function DebugStatus(){
-          const u = (localStorage.getItem('supa_url')||'').toString();
-          const k = (localStorage.getItem('supa_key')||'').toString();
-          const sdkOk = !!(window.supabase && window.supabase.createClient);
-          return (
-            <p className="text-xs text-neutral-500 mt-1">
-              Using URL: <code>{u||'(empty)'}</code> · Key: <code>{mask(k)}</code> · SDK: <code>{sdkOk?'loaded':'MISSING'}</code>
-            </p>
-          );
-        }
+        const fieldAvg = useMemo(()=>{
+          let s3=0,c3=0,s4=0,c4=0,s5=0,c5=0;
+          for(const p of players){
+            if(isTeamLike(p.name)) continue;
+            const ph=p.perHole||[];
+            for(let i=0;i<Math.min(18, ph.length); i++){
+              const pts=Number(ph[i])||0; const par=Number(coursePars[i])||4;
+              if(par===3){s3+=pts;c3++;} else if(par===4){s4+=pts;c4++;} else if(par===5){s5+=pts;c5++;}
+            }
+          }
+          const a3=c3?s3/c3:0, a4=c4?s4/c4:0, a5=c5?s5/c5:0;
+          return {
+            p3:to1(a3), p4:to1(a4), p5:to1(a5),
+            r3:ratingLabel(a3), r4:ratingLabel(a4), r5:ratingLabel(a5),
+            c3:ratingColor(a3), c4:ratingColor(a4), c5:ratingColor(a5)
+          };
+        },[players, coursePars]);
 
         return (
-          <div className="min-h-screen p-4 sm:p-6 md:p-8">
+          <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
             <div className="max-w-6xl mx-auto space-y-6">
-              <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
+
+              {/* Header */}
+              <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between"
+                onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
+                onTouchStart={startPress} onTouchEnd={cancelPress}>
                 <div>
-                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm" style={{color: connected ? '#059669' : '#dc2626'}}>
+                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League, Eclectic & Event Ratings</h1>
+                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : (statusMsg==='Not connected'?'#6b7280':'#dc2626')}}>
                     Supabase: {statusMsg}
                   </p>
-                  <DebugStatus />
+                  <p className="text-xs text-neutral-500 owner-only">
+                    Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code>
+                  </p>
+                  <p className="text-xs text-neutral-500 owner-only">
+                    Season source: {client && useCloudSeason ? 'Supabase' : 'Local (disconnected)'}
+                  </p>
                 </div>
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
                   <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-                  <button onClick={exportEvent} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
                 </div>
               </header>
 
-              {/* Settings */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              {/* Owner Settings */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Settings</h2>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
@@ -375,15 +570,17 @@
                   </div>
                   <div>
                     <label className="text-sm block mb-1">Supabase anon (public) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="eyJ..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" placeholder="sb_..." value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
                   </div>
                 </div>
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-3">
                   <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>{ localStorage.removeItem('supa_url'); localStorage.removeItem('supa_key'); setSupaURL(''); setSupaKEY(''); setClient(null); setStatusMsg('Not connected'); }} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Disconnect</button>
-                  <button onClick={fetchSeason} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={useCloudSeason} onChange={e=>setUseCloudSeason(e.target.checked)} />
+                    Use cloud season (Supabase)
+                  </label>
+                  <button onClick={()=>client && fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Tip: Serve this file via a local server if you see CORS or SDK blocked, e.g. <code>python -m http.server</code></p>
               </section>
 
               {/* Import + Event table */}
@@ -391,10 +588,11 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Event Players</h2>
                   <div className="flex flex-wrap gap-2">
-                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import CSV
-                      <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
+                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
+                      <input type="file" accept=".csv,.txt" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
                     </label>
-                    <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                    <button onClick={addEventToSeason} disabled={!players.length || !client} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                    <button onClick={resetEvent} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Reset Event</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -403,6 +601,9 @@
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
+                      {computed.length===0 && (
+                        <tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see the event.</td></tr>
+                      )}
                       {computed.map((r,i)=> (
                         <tr key={i} className="border-b">
                           <td>{r.position}</td>
@@ -417,17 +618,23 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Countback uses Back 9 from the player's detailed "Stableford" row. Ties share the highest available slot.</p>
+                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Countback uses Back-9 from the detailed card.</p>
+
+                {/* Owner: quick per-hole vs summary check */}
+                <div className="owner-only text-xs mono mt-3">
+                  <div className="font-medium mb-1">Per-hole sum vs summary Stableford</div>
+                  {players.map(p=>{
+                    const sum=(p.perHole||[]).reduce((a,b)=>a+(Number(b)||0),0);
+                    const flag=(p.points && sum!==p.points)?' ⚠︎ mismatch':'';
+                    return <div key={p.name}>{p.name}: per-hole {sum} vs summary {p.points ?? '—'}{flag}</div>;
+                  })}
+                </div>
               </section>
 
-              {/* League standings */}
+              {/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
-                  <div className="flex gap-2">
-                    <button onClick={exportStandings} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
-                    <button onClick={resetSeason} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700">Reset Season (local)</button>
-                  </div>
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -437,7 +644,10 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.values(season).sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name)).map((r,i)=> (
+                      {Object.values(season)
+                        .filter(r=>!isTeamLike(r.name))
+                        .sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name))
+                        .map((r,i)=> (
                         <tr key={r.name} className="border-b">
                           <td>{i+1}</td>
                           <td>{r.name}</td>
@@ -451,6 +661,15 @@
                     </tbody>
                   </table>
                 </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={()=>{
+                    const list=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
+                    const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
+                      ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
+                    downloadCSV(`DenSociety_Standings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`,rows);
+                  }} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
+                  <button onClick={resetSeasonLocal} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
+                </div>
               </section>
 
               {/* Eclectic leaderboard */}
@@ -458,11 +677,18 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
                   <div className="flex gap-2">
-                    <button onClick={exportEclecticCSV} className="px-3 py-2 rounded-2xl bg-black text-white">Export Eclectic CSV</button>
+                    <button onClick={()=>{
+                      const list=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.eclecticTotal??0)-(a.eclecticTotal??0)||a.name.localeCompare(b.name));
+                      const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
+                      const rows=[header,
+                        ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
+                      ];
+                      downloadCSV(`DenSociety_Eclectic_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`,rows);
+                    }} className="px-3 py-2 rounded-2xl bg-black text-white">Export Eclectic CSV</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
+                  <table className="min-w-full text-sm mono">
                     <thead>
                       <tr className="border-b text-left">
                         <th>Rank</th><th>Name</th><th>Eclectic Total</th>
@@ -471,6 +697,7 @@
                     </thead>
                     <tbody>
                       {Object.values(season)
+                        .filter(r=>!isTeamLike(r.name))
                         .sort((a,b)=>( (b.eclecticTotal??0) - (a.eclecticTotal??0) ) || a.name.localeCompare(b.name))
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
@@ -486,26 +713,102 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
+              {/* Ratings — per event */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
+                  <button
+                    className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
+                    disabled={!ratings.length}
+                    onClick={()=>{
+                      const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
+                      if (ratings.length) {
+                        rows.push(["Field Average", fieldAvg.p3, fieldAvg.r3, fieldAvg.p4, fieldAvg.r4, fieldAvg.p5, fieldAvg.r5]);
+                      }
+                      ratings.forEach(r=>rows.push([r.name, r.p3, r.r3, r.p4, r.r4, r.p5, r.r5]));
+                      downloadCSV(`DenSociety_EventRatings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`, rows);
+                    }}
+                  >Export Ratings</button>
+                </div>
+                <p className="text-xs text-neutral-600 mb-3">Pars auto-detected from the imported CSV; override in Owner Mode if needed. This section does not write to Supabase.</p>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th>Name</th>
+                        <th>Par-3 avg</th><th>Par-3 rating</th>
+                        <th>Par-4 avg</th><th>Par-4 rating</th>
+                        <th>Par-5 avg</th><th>Par-5 rating</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ratings.length>0 && (
+                        <tr className="border-b bg-neutral-50 font-semibold">
+                          <td>Field Average</td>
+                          <td>{fieldAvg.p3.toFixed(1)}</td><td className={fieldAvg.c3}>{fieldAvg.r3}</td>
+                          <td>{fieldAvg.p4.toFixed(1)}</td><td className={fieldAvg.c4}>{fieldAvg.r4}</td>
+                          <td>{fieldAvg.p5.toFixed(1)}</td><td className={fieldAvg.c5}>{fieldAvg.r5}</td>
+                        </tr>
+                      )}
+                      {ratings.map(r=>(
+                        <tr key={r.name} className="border-b">
+                          <td className="font-medium">{r.name}</td>
+                          <td>{r.p3.toFixed(1)}</td><td className={r.c3}>{r.r3}</td>
+                          <td>{r.p4.toFixed(1)}</td><td className={r.c4}>{r.r4}</td>
+                          <td>{r.p5.toFixed(1)}</td><td className={r.c5}>{r.r5}</td>
+                        </tr>
+                      ))}
+                      {!ratings.length && (
+                        <tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see event ratings.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Owner-only par debug & override */}
+                <div className="owner-only mt-4 rounded-lg border border-neutral-200 p-3 bg-neutral-50">
+                  <div className="text-sm font-medium mb-1">Owner Debug — Pars</div>
+                  <div className="text-xs mono">
+                    <div>Auto-detected pars: { ( (typeof autoPars!=='undefined' && autoPars && autoPars.length===18) ? autoPars.join(', ') : '(none — using default or override)' ) }</div>
+                    <div>Using pars: { coursePars.join(', ') }</div>
+                    <div>
+                      Counts — P3:{coursePars.filter(p=>p===3).length}
+                      &nbsp; P4:{coursePars.filter(p=>p===4).length}
+                      &nbsp; P5:{coursePars.filter(p=>p===5).length}
+                      &nbsp; Sum:{coursePars.reduce((a,b)=>a+b,0)}
+                    </div>
+                    <div>Par-3 holes: {holeDebug[3].join(', ')||'—'}</div>
+                    <div>Par-4 holes: {holeDebug[4].join(', ')||'—'}</div>
+                    <div>Par-5 holes: {holeDebug[5].join(', ')||'—'}</div>
+                  </div>
+                  <div className="mt-2">
+                    <label className="text-xs block mb-1">Override pars (comma-separated 18 values; leave blank to use auto)</label>
+                    <input className="w-full border rounded-lg p-2 mono bg-white"
+                           value={overridePars}
+                           onChange={e=>setOverridePars(e.target.value)}
+                           placeholder="e.g. 5,4,3,4,5,4,3,4,4,4,3,5,4,4,4,5,3,4" />
+                  </div>
+                </div>
+              </section>
+
               {/* How-to */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Enter your Supabase URL & anon key in <strong>Settings</strong> and click <strong>Save & Connect</strong>.</li>
-                  <li>Click <strong>Import CSV</strong> and choose your Squabbit export.</li>
-                  <li>Click <strong>Add Event → Season</strong> to update the league & eclectic.</li>
-                  <li>Use the Export buttons for CSVs.</li>
+                  <li>Import a Squabbit CSV (the event export).</li>
+                  <li>Event table + Ratings appear immediately. Pars are auto-detected by majority vote.</li>
+                  <li>(Optional) In Owner Mode, set Supabase URL/key and click <strong>Save & Connect</strong>, then <strong>Add Event → Season</strong> to update league & eclectic.</li>
+                  <li>Use the export buttons for CSVs. <em>Reset Event</em> clears the current file; <em>Reset Season (local)</em> only clears the on-page season cache.</li>
                 </ol>
               </section>
+
             </div>
           </div>
         );
       }
 
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(<App />);
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
 </html>
 
-
-      
