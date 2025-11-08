@@ -90,10 +90,7 @@
           const hasPar = row.some(c => String(c).toLowerCase() === 'par');
           if(!hasPar) continue;
           const nums = asNums(row).filter(n => n!==null);
-          if (nums.length >= 18) {
-            candidates.push({ kind:'row18', arr: nums.slice(0,18) });
-            continue;
-          }
+          if (nums.length >= 18) { candidates.push({ kind:'row18', arr: nums.slice(0,18) }); continue; }
           if (nums.length >= 8 && nums.length <= 10) {
             for (let j=i+1; j<Math.min(lines.length, i+7); j++){
               const row2 = lines[j];
@@ -114,6 +111,7 @@
         return null;
       }
 
+      // 🔧 De-duped Squabbit parser
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n').filter(Boolean);
         const lines = rows.map(splitSmart);
@@ -123,48 +121,60 @@
 
         // players header
         const playerHeaderRow = lines.findIndex(r=>(r[0]||'')==='Name' && (r[1]||'')==='Hdcp');
-        const players=[];
-        if(playerHeaderRow>=0){
-          for(let i=playerHeaderRow+1;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            const hcap=parseFloat((lines[i][1]||'').trim());
-            if(!name) break;
-            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
+        const byName = new Map(); // avoid duplicates
+
+        if (playerHeaderRow >= 0){
+          for (let i = playerHeaderRow + 1; i < lines.length; i++){
+            const name = (lines[i][0] || '').trim();
+            if (!name) break;           // end of block
+            if (isTeamLike(name)) continue;
+
+            const hcap = parseFloat((lines[i][1] || '').trim());
+            if (!Number.isNaN(hcap)) {
+              if (!byName.has(name)) {
+                byName.set(name, { name, handicap: hcap, gender: 'M', points: 0, perHole: [] });
+              } else {
+                const prev = byName.get(name);
+                if (!Number.isFinite(prev.handicap) && Number.isFinite(hcap)) prev.handicap = hcap;
+              }
+            }
           }
         }
 
-        // totals
-        const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
-        const totals={};
-        if(stablefordSectionRow>=0){
-          for(let i=stablefordSectionRow+2;i<lines.length;i++){
-            const nm=(lines[i][0]||'').trim(); if(!nm) break;
-            const r1=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(r1)) totals[nm]=r1;
+        // Stableford (summary) totals
+        const stablefordSectionRow = lines.findIndex(r => (r[0] || '') === 'Stableford');
+        if (stablefordSectionRow >= 0) {
+          for (let i = stablefordSectionRow + 2; i < lines.length; i++) {
+            const name = (lines[i][0] || '').trim();
+            if (!name) break;
+            if (isTeamLike(name)) continue;
+
+            const r1 = parseFloat((lines[i][1] || '').trim());
+            if (!Number.isNaN(r1)) {
+              if (!byName.has(name)) {
+                byName.set(name, { name, handicap: NaN, gender: 'M', points: r1, perHole: [] });
+              } else {
+                byName.get(name).points = r1;
+              }
+            }
           }
         }
 
-        // per-hole (row i: name, row i+1 col B: "Stableford")
-        const holeData={};
-        const getNum=x=>{ const v=parseFloat(String(x||'').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:0; };
-        for(const p of players){
-          for(let i=0;i<lines.length-1;i++){
-            if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
-              const st=lines[i+1]||[];
-              const perHole=[...st.slice(3,12).map(getNum),...st.slice(13,22).map(getNum)];
-              holeData[p.name]={perHole};
+        // Per-hole Stableford from detailed card (row i: name, row i+1 col B === "Stableford")
+        const getNum = x => { const v = parseFloat(String(x || '').replace(/[^0-9.\-]/g, '')); return Number.isFinite(v) ? v : 0; };
+        for (const [name, rec] of byName) {
+          for (let i = 0; i < lines.length - 1; i++) {
+            if ((lines[i]?.[0] || '').trim() === name && (lines[i + 1]?.[1] || '').trim() === 'Stableford') {
+              const st = lines[i + 1] || [];
+              const perHole = [...st.slice(3, 12).map(getNum), ...st.slice(13, 22).map(getNum)];
+              rec.perHole = perHole;
               break;
             }
           }
         }
 
-        const outPlayers = players.map(p=>({
-          name:p.name,
-          gender:p.gender,
-          handicap:p.handicap,
-          points: totals[p.name]||0,
-          perHole: holeData[p.name]?.perHole || [],
-        }));
+        // Final list (filter any team-like names again just in case)
+        const outPlayers = Array.from(byName.values()).filter(p => !isTeamLike(p.name));
 
         return { players: outPlayers, detectedPars };
       }
@@ -274,6 +284,15 @@
           const parsed = parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setAutoPars(parsed.detectedPars||null);
+        }
+
+        function resetEvent(){
+          setPlayers([]);
+          setAutoPars(null);
+          setOverridePars('');
+        }
+        function resetSeasonLocal(){
+          setSeason({});
         }
 
         // Compute this-event table (positions, points, next handicap)
@@ -443,7 +462,7 @@
                 </div>
                 <div className="mt-3 flex gap-2">
                   <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
+                  <button onClick={()=>client && fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
                 </div>
               </section>
 
@@ -456,6 +475,7 @@
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
                     </label>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                    <button onClick={resetEvent} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Reset Event</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -495,6 +515,7 @@
                         ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
                       downloadCSV(`DenSociety_Standings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`,rows);
                     }} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
+                    <button onClick={resetSeasonLocal} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -655,3 +676,4 @@
     </script>
   </body>
 </html>
+
