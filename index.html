@@ -23,12 +23,16 @@
       /* global React, ReactDOM, supabase */
       const { useMemo, useState, useEffect, useRef } = React;
 
-      // ---------- Small utils ----------
+      // ---------- Utils ----------
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
       const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
       const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
       const to1 = x => Math.round((Number(x)||0)*10)/10;
+      const isTeamLike = name =>
+        /^(team(\s*\d+)?)$/i.test(name||'') ||
+        /^team average$/i.test(name||'') ||
+        /^stableford$/i.test(name||'');
 
       // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
@@ -46,13 +50,7 @@
         return {nextExact:bounded,nextPlaying:nextPlay};
       }
 
-      // ---------- Name filters ----------
-      const isTeamLike = name =>
-        /^(team(\s*\d+)?)$/i.test(name||'') ||
-        /^team average$/i.test(name||'') ||
-        /^stableford$/i.test(name||'');
-
-      // ---------- Supabase helpers ----------
+      // ---------- Supabase helpers (Owner Mode only UI) ----------
       function normalizeUrl(u){
         if(!u) return '';
         let s = String(u).trim().replace(/\/+$/,'');
@@ -75,7 +73,7 @@
       }
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
 
-      // ---------- CSV parsing (robust) ----------
+      // ---------- CSV parsing ----------
       function detectDelimiter(text){
         const lines = text.replace(/\r/g,'').split('\n').filter(Boolean).slice(0,30);
         let comma=0, tab=0, semi=0;
@@ -116,7 +114,7 @@
         return text.replace(/\r/g,'').split('\n').map(l => parseCsvLine(l, delim));
       }
 
-      // ---------- Majority-vote par detection ----------
+      // ---------- Pars detection ----------
       function detectParsFromLines(lines){
         const only345 = arr => arr.filter(n => n===3 || n===4 || n===5);
         const numsFromRow = row => row
@@ -176,7 +174,7 @@
         return out;
       }
 
-      // ---------- Robust per-hole extraction ----------
+      // ---------- Per-hole extraction ----------
       function normCellToPoint(x){
         const s = String(x ?? '').trim();
         if(!s || s.toUpperCase()==='P') return 0;
@@ -232,7 +230,7 @@
           }
         }
 
-        // Totals section (summary)
+        // Totals (summary) section
         const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
         if(stablefordSectionRow >= 0){
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
@@ -250,7 +248,7 @@
           }
         }
 
-        // Per-hole (robust)
+        // Per-hole
         for(const [name, rec] of byName){
           let best = null;
           let bestSum = -1;
@@ -285,10 +283,9 @@
         return { players: outPlayers, detectedPars };
       }
 
-      // ---------- Ratings (per event) ----------
+      // ---------- Ratings helpers ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
-
       function eventParAverages(perHole, pars){
         let sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
         for(let i=0;i<Math.min(18, perHole.length); i++){
@@ -300,7 +297,7 @@
         return {p3:avg(3),p4:avg(4),p5:avg(5)};
       }
 
-      // ---------- Name splitting for Squabbit ----------
+      // ---------- Name split for Squabbit ----------
       function splitFirstLast(fullName){
         const raw = (fullName||'').trim().replace(/\s+/g,' ');
         if(!raw) return { first:'', last:'' };
@@ -313,7 +310,7 @@
 
       // ---------- App ----------
       function App(){
-        // Owner Mode toggle (long-press title or Ctrl+Alt+O)
+        // Owner Mode (toggle: long-press title or Ctrl+Alt+O)
         const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
         const pressTimer = useRef(null);
         const startPress = ()=>{ pressTimer.current=setTimeout(()=>{ const next=!ownerMode; setOwnerMode(next); if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); }, 1200); };
@@ -325,10 +322,9 @@
           return ()=>window.removeEventListener('keydown', onKey);
         },[ownerMode]);
 
-        // Supabase (owner-only)
-        const defaultURL = ""; // set in Owner Mode if you want cloud season
+        // Supabase (owner only)
+        const defaultURL = "";
         const defaultKEY = "";
-
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
@@ -405,14 +401,8 @@
           setAutoPars(parsed.detectedPars||null);
         }
 
-        function resetEvent(){
-          setPlayers([]);
-          setAutoPars(null);
-          setOverridePars('');
-        }
-        function resetSeasonLocal(){
-          setSeason({});
-        }
+        function resetEvent(){ setPlayers([]); setAutoPars(null); setOverridePars(''); }
+        function resetSeasonLocal(){ setSeason({}); }
 
         // Compute event positions/points/next HCP
         const computed = useMemo(()=>{
@@ -513,13 +503,15 @@
             .filter(r => r && r.name && !isTeamLike(r.name))
             .forEach(r=>{
               const { first, last } = splitFirstLast(r.name);
-              const h = Number.isFinite(r.nextPlaying) ? r.nextPlaying.toFixed(1) : (Number.isFinite(r.startExact)? Number(r.startExact).toFixed(1) : "0.0");
+              const h = Number.isFinite(r.nextPlaying)
+                ? r.nextPlaying.toFixed(1)
+                : (Number.isFinite(r.startExact) ? Number(r.startExact).toFixed(1) : "0.0");
               rows.push([first, last, h]);
             });
           downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
         }
 
-        // ---------- Per-event ratings ----------
+        // ---------- Ratings (per event) ----------
         const ratings = useMemo(()=>{
           const out=[];
           for(const p of players){
@@ -559,7 +551,7 @@
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
             <div className="max-w-6xl mx-auto space-y-6">
 
-              {/* Header */}
+              {/* Header (long-press to toggle Owner Mode) */}
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between"
                 onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
                 onTouchStart={startPress} onTouchEnd={cancelPress}>
@@ -609,15 +601,31 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Event Players</h2>
                   <div className="flex flex-wrap gap-2">
-                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
+                    <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">
+                      Import Squabbit CSV
                       <input type="file" accept=".csv,.txt" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
                     </label>
-                    <button onClick={addEventToSeason} disabled={!players.length || !client} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-                    <button onClick={resetEvent} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">Reset Event</button>
-                    <!-- NEW: Squabbit export -->
-                    <button onClick={exportSquabbitHandicaps} disabled={!computed.length} className="px-3 py-2 rounded-xl bg-indigo-600 text-white disabled:opacity-40" title="Creates a First,Last,Handicap CSV ready for Squabbit import">Export to Squabbit (Handicaps)</button>
+
+                    <button onClick={addEventToSeason} disabled={!players.length || !client} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">
+                      Add Event → Season
+                    </button>
+
+                    <button onClick={resetEvent} className="px-3 py-2 rounded-xl border border-red-300 text-red-700">
+                      Reset Event
+                    </button>
+
+                    {/* NEW: Squabbit export */}
+                    <button
+                      onClick={exportSquabbitHandicaps}
+                      disabled={!computed.length}
+                      className="px-3 py-2 rounded-xl bg-indigo-600 text-white disabled:opacity-40"
+                      title="Creates a First,Last,Handicap CSV ready for Squabbit import"
+                    >
+                      Export to Squabbit (Handicaps)
+                    </button>
                   </div>
                 </div>
+
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -794,12 +802,7 @@
                   <div className="text-xs mono">
                     <div>Auto-detected pars: { ( (typeof autoPars!=='undefined' && autoPars && autoPars.length===18) ? autoPars.join(', ') : '(none — using default or override)' ) }</div>
                     <div>Using pars: { coursePars.join(', ') }</div>
-                    <div>
-                      Counts — P3:{coursePars.filter(p=>p===3).length}
-                      &nbsp; P4:{coursePars.filter(p=>p===4).length}
-                      &nbsp; P5:{coursePars.filter(p=>p===5).length}
-                      &nbsp; Sum:{coursePars.reduce((a,b)=>a+b,0)}
-                    </div>
+                    <div>Counts — P3:{coursePars.filter(p=>p===3).length} &nbsp; P4:{coursePars.filter(p=>p===4).length} &nbsp; P5:{coursePars.filter(p=>p===5).length} &nbsp; Sum:{coursePars.reduce((a,b)=>a+b,0)}</div>
                     <div>Par-3 holes: {holeDebug[3].join(', ')||'—'}</div>
                     <div>Par-4 holes: {holeDebug[4].join(', ')||'—'}</div>
                     <div>Par-5 holes: {holeDebug[5].join(', ')||'—'}</div>
@@ -819,8 +822,8 @@
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
                   <li>Import a Squabbit CSV (the event export).</li>
-                  <li>Event table + Ratings appear immediately. Pars are auto-detected by majority vote.</li>
-                  <li>(Optional) In Owner Mode, set Supabase URL/key and click <strong>Save & Connect</strong>, then <strong>Add Event → Season</strong> to update league & eclectic.</li>
+                  <li>Event table + Ratings appear immediately. Pars auto-detected by majority vote.</li>
+                  <li>(Optional) In Owner Mode, set Supabase URL/key → <strong>Save & Connect</strong>, then <strong>Add Event → Season</strong> to update league & eclectic.</li>
                   <li>Click <strong>Export to Squabbit (Handicaps)</strong> to download a ready-to-import CSV for Squabbit.</li>
                 </ol>
               </section>
