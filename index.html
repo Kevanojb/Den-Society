@@ -67,7 +67,7 @@
       async function probe(client){
         try{
           const { error, status } = await client.from('season_standings').select('*').limit(1);
-        if(error) return { ok:false, status, msg:error.message };
+          if(error) return { ok:false, status, msg:error.message };
           return { ok:true, status:200, msg:'Connected' };
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
@@ -107,17 +107,61 @@
           }
         }
 
-        // 3) Per-hole Stableford from detailed card (row i: name, row i+1 col B = "Stableford")
+        // 3) Per-hole Stableford from detailed card — robust extractor
         const holeData={};
-        const getNum=x=>{ const v=parseFloat(String(x||'').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:0; };
+        const getNum = x => {
+          const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
+          return Number.isFinite(v) ? v : NaN;
+        };
+
+        function extract18FromStablefordRow(st) {
+          // Find the column that literally contains "Stableford"
+          const sIdx = st.findIndex(v => String(v).trim() === 'Stableford');
+          const start = sIdx >= 0 ? sIdx + 1 : 0;
+
+          // Collect runs of consecutive numeric cells (>= 9 long), ignoring blanks/labels like Out/In/Total
+          const runs = [];
+          let run = [];
+
+          for (let j = start; j < st.length; j++) {
+            const raw = st[j];
+            const n = getNum(raw);
+
+            const isNumericCell = raw !== '' && Number.isFinite(n);
+
+            if (isNumericCell) {
+              run.push(n);
+            } else {
+              if (run.length >= 9) runs.push(run.slice(0, 9));
+              run = [];
+            }
+          }
+          if (run.length >= 9) runs.push(run.slice(0, 9));
+
+          if (runs.length >= 2) {
+            const perHole = [...runs[0], ...runs[1]];
+            const back9 = perHole.slice(9).reduce((a, b) => a + b, 0);
+            return { perHole, back9 };
+          }
+
+          // Fallback to legacy offsets if structure is unexpected
+          const front9 = st.slice(3, 12).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
+          const back9H = st.slice(13, 22).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
+          const perHole = [...front9, ...back9H];
+          const back9 = back9H.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+          return { perHole, back9 };
+        }
+
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
-            if((lines[i]?.[0]||'').trim()===p.name && (lines[i+1]?.[1]||'').trim()==='Stableford'){
-              const st=lines[i+1]||[];
-              const front9 = st.slice(3,12).map(getNum);
-              const back9H = st.slice(13,22).map(getNum);
-              const perHole = [...front9, ...back9H];
-              const back9 = back9H.reduce((a,b)=>a+b,0);
+            const isPlayerRow = (lines[i]?.[0]||'').trim()===p.name;
+            const nextHasStableford =
+              String(lines[i+1]?.[1]||'').trim()==='Stableford' ||
+              (Array.isArray(lines[i+1]) && lines[i+1].some?.(c => String(c).trim()==='Stableford'));
+
+            if(isPlayerRow && nextHasStableford){
+              const st = lines[i+1] || [];
+              const { perHole, back9 } = extract18FromStablefordRow(st);
               holeData[p.name]={perHole,back9};
               break;
             }
@@ -246,7 +290,7 @@
             for(const i of g){
               const r=rows.find(x=>x.idx===i);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
-              out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
+              out.push({...r,position=start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
             }
             pos+=g.length;
           }
@@ -534,7 +578,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
-                  <button
+                <button
                     className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
                     disabled={!ratings.length}
                     onClick={()=>{
