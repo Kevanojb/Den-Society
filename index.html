@@ -67,7 +67,7 @@
       async function probe(client){
         try{
           const { error, status } = await client.from('season_standings').select('*').limit(1);
-        if(error) return { ok:false, status, msg:error.message };
+          if(error) return { ok:false, status, msg:error.message };
           return { ok:true, status:200, msg:'Connected' };
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
@@ -134,19 +134,63 @@
         }));
       }
 
+      // ---------- Pars detector for Ratings (event-only) ----------
+      function asNums(arr){
+        return arr.map(x => {
+          const v = parseFloat(String(x||'').replace(/[^0-9.\-]/g,''));
+          return Number.isFinite(v) ? v : null;
+        });
+      }
+      function detectParsFromCSVText(csvText){
+        const lines = csvText.replace(/\r/g,'').split('\n').filter(Boolean).map(splitSmart);
+        const candidates = [];
+        for(let i=0;i<lines.length;i++){
+          const row = lines[i];
+          const hasPar = row.some(c => String(c).toLowerCase() === 'par');
+          if(!hasPar) continue;
+
+          const nums = asNums(row).filter(n=>n!==null);
+          if(nums.length >= 18){
+            candidates.push(nums.slice(0,18));
+            continue;
+          }
+          if(nums.length >= 8 && nums.length <= 10){
+            for(let j=i+1;j<Math.min(lines.length, i+7);j++){
+              const row2 = lines[j];
+              const hasPar2 = row2.some(c => String(c).toLowerCase() === 'par');
+              if(!hasPar2) continue;
+              const nums2 = asNums(row2).filter(n=>n!==null);
+              if(nums2.length >= 8 && nums2.length <= 10){
+                const joined = [...nums, ...nums2].slice(0,18);
+                if(joined.length === 18) candidates.push(joined);
+              }
+            }
+          }
+        }
+        if(candidates.length){
+          return candidates[0].map(n => Math.round(n));
+        }
+        return null;
+      }
+
       // ---------- Ratings helpers (event-only, local) ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
-      const makeDefaultPars = ()=>[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4]; // safe default
+      const makeDefaultPars = ()=>[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
       function eventParAverages(perHole, pars){
-        let sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
-        for(let i=0;i<Math.min(18, perHole.length); i++){
-          const pts = Number(perHole[i])||0;
-          const par = Number(pars[i])||4;
-          if(sums[par]){sums[par].s+=pts; sums[par].c++;}
+        let s3=0,c3=0,s4=0,c4=0,s5=0,c5=0;
+        for(let i=0;i<Math.min(18, perHole.length, pars.length); i++){
+          const pts = Number.isFinite(+perHole[i]) ? +perHole[i] : null;
+          const par = Number.isFinite(+pars[i]) ? +pars[i] : null;
+          if(pts===null || par===null) continue;
+          if(par===3){ s3+=pts; c3++; }
+          else if(par===4){ s4+=pts; c4++; }
+          else if(par===5){ s5+=pts; c5++; }
         }
-        const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
-        return {p3:avg(3),p4:avg(4),p5:avg(5)};
+        const a3 = c3 ? s3/c3 : 0;
+        const a4 = c4 ? s4/c4 : 0;
+        const a5 = c5 ? s5/c5 : 0;
+        return { p3:a3, p4:a4, p5:a5 };
       }
 
       // ---------- App ----------
@@ -215,9 +259,6 @@
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
 
-        async function importCSV(file){ const text=await file.text(); setPlayers(parseSquabbitCSV(text)); }
-        function resetSeasonLocal(){ setSeason({}); }
-
         // Course pars (Owner-only input, saved locally). Ratings read from here only.
         const [parsStr,setParsStr]=useState(localStorage.getItem('den_course_pars')||makeDefaultPars().join(','));
         const coursePars = useMemo(()=>{
@@ -226,6 +267,24 @@
             return arr.length===18 ? arr : makeDefaultPars();
           }catch{ return makeDefaultPars(); }
         },[parsStr]);
+
+        // Import CSV — stable event parse + auto-detect pars (ratings only)
+        async function importCSV(file){
+          const text = await file.text();
+
+          // event players/results (stable)
+          setPlayers(parseSquabbitCSV(text));
+
+          // auto-pars for ratings — local only
+          const detected = detectParsFromCSVText(text);
+          if (Array.isArray(detected) && detected.length === 18) {
+            const next = detected.join(',');
+            setParsStr(next);
+            localStorage.setItem('den_course_pars', next);
+          }
+        }
+
+        function resetSeasonLocal(){ setSeason({}); }
 
         // This-event table (positions, league pts, next handicap)
         const computed = useMemo(()=>{
@@ -366,8 +425,10 @@
           for(const p of players){
             if(isTeamLike(p.name)) continue;
             const perHole=p.perHole||[];
-            for(let i=0;i<Math.min(18, perHole.length); i++){
-              const pts=Number(perHole[i])||0; const par=Number(coursePars[i])||4;
+            for(let i=0;i<Math.min(18, perHole.length, coursePars.length); i++){
+              const pts=Number.isFinite(+perHole[i]) ? +perHole[i] : null;
+              const par=Number.isFinite(+coursePars[i]) ? +coursePars[i] : null;
+              if(pts===null || par===null) continue;
               if(par===3){s3+=pts;c3++;} else if(par===4){s4+=pts;c4++;} else if(par===5){s5+=pts;c5++;}
             }
           }
@@ -427,7 +488,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Event Players</h2>
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
                     <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)importCSV(f);}} />
                     </label>
@@ -533,7 +594,10 @@
               {/* Ratings — per event (safe, local only) */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
+                  <div>
+                    <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
+                    <p className="text-xs text-neutral-500 owner-only">Using pars: {coursePars.join(', ')}</p>
+                  </div>
                   <button
                     className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
                     disabled={!ratings.length}
@@ -548,7 +612,7 @@
                   >Export Ratings</button>
                 </div>
                 <p className="text-xs text-neutral-600 mb-3">
-                  Uses the 18-hole pars set in Owner Mode to group holes by Par-3/4/5. This section does not write to Supabase.
+                  Pars auto-detected from the imported CSV; override in Owner Mode if needed. This section does not write to Supabase.
                 </p>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -601,10 +665,9 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Import a Squabbit CSV.</li>
-                  <li>Event table appears; click <strong>Add Event → Season</strong> to update Supabase.</li>
-                  <li>Toggle <strong>Owner Mode</strong> (Ctrl+Alt+O or long-press title) to set course pars for ratings.</li>
-                  <li>Ratings section is event-only and won’t write anything to Supabase.</li>
+                  <li>Import a Squabbit CSV — event table shows immediately.</li>
+                  <li>(Optional) Click <strong>Add Event → Season</strong> to update Supabase league & eclectic.</li>
+                  <li>Ratings auto-detect pars from the CSV; tweak in Owner Mode if needed.</li>
                   <li>Export Event / Standings / Eclectic / Ratings as needed.</li>
                 </ol>
               </section>
@@ -619,3 +682,4 @@
     </script>
   </body>
 </html>
+
