@@ -14,6 +14,7 @@
       .owner-only{display:none;}
       .owner-on .owner-only{display:block;}
       .mono{font-variant-numeric:tabular-nums}
+      details summary { cursor: pointer; }
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
@@ -78,19 +79,20 @@
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
 
-      // Helper: extract two 9-length numeric runs after a marker cell (e.g., "Stableford")
+      const toNum = x => {
+        const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
+        return Number.isFinite(v) ? v : NaN;
+      };
+
+      // Extract two 9-length numeric runs after a marker cell (e.g., "Stableford")
       function extractTwoNinesFromRow(row, markerText){
-        const getNum = x => {
-          const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
-          return Number.isFinite(v) ? v : NaN;
-        };
         const idx = row.findIndex(v => String(v).trim() === markerText);
         const start = idx >= 0 ? idx + 1 : 0;
         const runs = [];
         let run = [];
         for(let j=start;j<row.length;j++){
           const raw=row[j];
-          const n=getNum(raw);
+          const n=toNum(raw);
           const isNumericCell = raw !== '' && Number.isFinite(n);
           if(isNumericCell){ run.push(n); }
           else { if(run.length>=9) runs.push(run.slice(0,9)); run=[]; }
@@ -102,86 +104,57 @@
         return null;
       }
 
-      // Robust per-CSV par detector
+      // Par detector tailored for your layout:
+      // "Par" label row with numbers interspersed with Out/In/Total/36/72 etc.
       function detectParsFromLines(lines){
-        const isParWord = v => /^par(s)?$/i.test(String(v).trim());
-
-        // Utility: collect all 18-length numeric windows from a row
-        function get18Runs(row, startIdx=0){
-          const nums = [];
-          const runs = [];
-          const toNum = x => {
-            const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
-            return Number.isFinite(v) ? v : NaN;
-          };
-          for(let j=startIdx; j<row.length; j++){
-            const n = toNum(row[j]);
-            if(Number.isFinite(n)){ nums.push(n); }
-            else{
-              if(nums.length>=18) runs.push(...sliceInto18s(nums));
-              nums.length = 0;
-            }
-          }
-          if(nums.length>=18) runs.push(...sliceInto18s(nums));
-          return runs;
-
-          function sliceInto18s(arr){
-            const out=[];
-            for(let k=0; k+17<arr.length; k++){
-              out.push(arr.slice(k,k+18));
-            }
-            return out;
-          }
-        }
-
-        // Score a candidate: prefer only 3/4/5, and having both 3s & 5s; also prefer near-integers
-        function scorePars(arr){
-          if(arr.length!==18) return -Infinity;
-          let ok=true, has3=false, has5=false;
-          for(const n of arr){
-            const r = Math.round(n);
-            if(!(r===3||r===4||r===5)){ ok=false; break; }
-            if(r===3) has3=true;
-            if(r===5) has5=true;
-          }
-          if(!ok) return -Infinity;
-          const intCloseness = -arr.reduce((s,n)=>s+Math.abs(n-Math.round(n)),0);
-          return (has3?5:0) + (has5?5:0) + intCloseness;
-        }
-
-        // 1) Look for explicit Par/Pars/PAR on any row
+        // 1) Exact Par row: scan left→right and pick only 3/4/5 until 18 hits
         for(const row of lines){
-          const parIdx = row.findIndex(isParWord);
-          if(parIdx>=0){
-            const runs = get18Runs(row, parIdx+1);
-            let best=null, bestScore=-Infinity;
-            for(const cand of runs){
-              const sc=scorePars(cand);
-              if(sc>bestScore){ best=cand; bestScore=sc; }
+          if(row.some(c => /^par$/i.test(String(c).trim()))){
+            const pars=[];
+            for(const cell of row){
+              const s = String(cell||'').trim();
+              if(/^(out|in|total)$/i.test(s)) continue;
+              const n = toNum(s);
+              const r = Math.round(n);
+              if(r===3 || r===4 || r===5){
+                pars.push(r);
+                if(pars.length===18) return pars;
+              }
+              // ignore 36/72/totals or blanks
             }
-            if(best){
-              return best.map(n=>{
-                const r=Math.round(Number(n)||0);
-                return (r===3||r===4||r===5)?r:4;
-              });
-            }
+            // Sometimes front/back are on separate Par rows; fall through
           }
         }
 
-        // 2) Heuristic: any unlabeled 18-run of 3/4/5 numbers
-        let best=null, bestScore=-Infinity;
+        // 2) Two Par rows (front/back 9) — stitch first two runs of 3/4/5
+        const nineRuns=[];
         for(const row of lines){
-          const runs = get18Runs(row, 0);
-          for(const cand of runs){
-            const sc=scorePars(cand);
-            if(sc>bestScore){ best=cand; bestScore=sc; }
+          if(row.some(c => /^par$/i.test(String(c).trim()))){
+            const tmp=[];
+            for(const cell of row){
+              const r = Math.round(toNum(cell));
+              if(r===3||r===4||r===5) tmp.push(r);
+            }
+            if(tmp.length>=9) nineRuns.push(tmp.slice(0,9));
           }
         }
-        if(best && bestScore>-Infinity){
-          return best.map(n=>Math.max(3, Math.min(5, Math.round(Number(n)||4))));
+        if(nineRuns.length>=2){
+          const pars=[...nineRuns[0], ...nineRuns[1]].slice(0,18);
+          if(pars.length===18) return pars;
         }
 
-        // 3) Give up
+        // 3) Heuristic fallback: any row that yields 18 values of 3/4/5 in order
+        for(const row of lines){
+          const pars=[];
+          for(const cell of row){
+            const r=Math.round(toNum(cell));
+            if(r===3||r===4||r===5){
+              pars.push(r);
+              if(pars.length===18) return pars;
+            }else if(!Number.isFinite(r)){ /* skip */ }
+          }
+        }
+
         return null;
       }
 
@@ -205,7 +178,7 @@
           }
         }
 
-        // 2) Stableford totals
+        // 2) Stableford totals (summary table)
         const stablefordSectionRow=lines.findIndex(r=>(r[0]||'')==='Stableford');
         const totals={};
         if(stablefordSectionRow>=0){
@@ -220,35 +193,31 @@
 
         // 3) Per-hole Stableford from detailed card — robust extractor
         const holeData={};
-
         function extract18FromStablefordRow(st) {
+          // prefer the marker-aware path
           const perHole = extractTwoNinesFromRow(st, 'Stableford');
           if(perHole){
-            const back9 = perHole.slice(9).reduce((a,b)=>a+(Number.isFinite(b)?b:0),0);
-            return { perHole, back9 };
+            const clean = perHole.map(v => Number.isFinite(v) ? v : 0);
+            const back9 = clean.slice(9).reduce((a,b)=>a+b,0);
+            return { perHole: clean, back9 };
           }
-          // Fallback to legacy offsets if structure is unexpected
-          const getNum = x => {
-            const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
-            return Number.isFinite(v) ? v : NaN;
-          };
-          const front9 = st.slice(3, 12).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
-          const back9H = st.slice(13, 22).map(getNum).map(v => (Number.isFinite(v) ? v : 0));
+          // fallback by legacy offsets
+          const front9 = st.slice(3, 12).map(toNum).map(v => (Number.isFinite(v) ? v : 0));
+          const back9H = st.slice(13, 22).map(toNum).map(v => (Number.isFinite(v) ? v : 0));
           const combined = [...front9, ...back9H];
           const back9 = back9H.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
           return { perHole: combined, back9 };
         }
-
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
             const isPlayerRow = (lines[i]?.[0]||'').trim()===p.name;
             const nextHasStableford =
               String(lines[i+1]?.[1]||'').trim()==='Stableford' ||
               (Array.isArray(lines[i+1]) && lines[i+1].some?.(c => String(c).trim()==='Stableford'));
-
             if(isPlayerRow && nextHasStableford){
               const st = lines[i+1] || [];
               const { perHole, back9 } = extract18FromStablefordRow(st);
+              // Clean: turn P, \, blanks => 0 (already handled via toNum/NaN→0)
               holeData[p.name]={perHole,back9};
               break;
             }
@@ -404,7 +373,7 @@
           return out.sort((a,b)=>a.position-b.position);
         },[players]);
 
-        // Supabase fetch & upsert (unchanged, filtered)
+        // Supabase fetch & upsert
         async function fetchSeasonWith(c){
           const { data, error } = await c.from('season_standings')
             .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
@@ -530,6 +499,10 @@
           };
         },[players, effectivePars]);
 
+        // ---------- Debug ----------
+        const [openDebug, setOpenDebug] = useState(false);
+        function holesByPar(pars, parNum){ const out=[]; for(let i=0;i<pars.length;i++){ if(pars[i]===parNum) out.push(i+1); } return out; }
+
         // ---------- UI ----------
         return (
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
@@ -537,8 +510,8 @@
 
               {/* Header */}
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between"
-                onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
-                onTouchStart={startPress} onTouchEnd={cancelPress}>
+                onMouseDown={()=>{}} onMouseUp={()=>{}} onMouseLeave={()=>{}}
+                onTouchStart={()=>{}} onTouchEnd={()=>{}}>
                 <div>
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
                   <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>
@@ -554,26 +527,6 @@
                   <button onClick={exportEvent} className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
                 </div>
               </header>
-
-              {/* Settings (Owner only) */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
-                <h2 className="text-lg font-semibold mb-2">Settings</h2>
-                <div className="grid md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm block mb-1">Supabase URL</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>client && fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
-                </div>
-                <p className="text-xs text-neutral-500 mt-2">Toggle Owner Mode with Ctrl+Alt+O (or long-press title).</p>
-              </section>
 
               {/* Import + Event table */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
@@ -682,7 +635,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
-              {/* Ratings — per event (safe, local only) */}
+              {/* Ratings — per event */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
@@ -754,20 +707,46 @@
                   className="w-full border rounded-xl p-2 mono bg-white"
                   value={parsStr}
                   onChange={e=>{ setParsStr(e.target.value); localStorage.setItem('den_course_pars', e.target.value); }}
-                  placeholder="e.g. 5,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4"
+                  placeholder="e.g. 5,4,3,4,5,4,3,4,4, 4,3,5,4,4,4,5,3,4"
                 />
               </section>
 
-              {/* How-to */}
+              {/* Debug */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <h2 className="text-lg font-semibold mb-2">How to Use</h2>
-                <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Import a Squabbit CSV. Pars are auto-detected when present.</li>
-                  <li>Event table appears; click <strong>Add Event → Season</strong> to update Supabase.</li>
-                  <li>Toggle <strong>Owner Mode</strong> (Ctrl+Alt+O or long-press title) to view/override pars for ratings.</li>
-                  <li>Ratings section is event-only and won’t write anything to Supabase.</li>
-                  <li>Export Event / Standings / Eclectic / Ratings as needed.</li>
-                </ol>
+                <details onToggle={e=>setOpenDebug(e.target.open)}>
+                  <summary className="text-lg font-semibold">Debug: Pars & Per-Hole</summary>
+                  <div className="mt-3 space-y-3">
+                    <div className="text-sm">
+                      <div><strong>Effective Pars (H1–H18):</strong></div>
+                      <div className="mono break-words">{(effectivePars||[]).join(', ')}</div>
+                      <div className="mt-1 text-xs text-neutral-600">
+                        Par-3: {holesByPar(effectivePars||[],3).join(', ') || '—'}<br/>
+                        Par-4: {holesByPar(effectivePars||[],4).join(', ') || '—'}<br/>
+                        Par-5: {holesByPar(effectivePars||[],5).join(', ') || '—'}
+                      </div>
+                    </div>
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-xs mono">
+                        <thead>
+                          <tr className="border-b text-left">
+                            <th>Name</th>
+                            {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {players.map(p=>(
+                            <tr key={p.name} className="border-b">
+                              <td className="font-medium">{p.name}</td>
+                              {(p.perHole||[]).map((v,ix)=>(
+                                <td key={ix} title={`Par ${effectivePars[ix]||'-'}`}>{Number.isFinite(v)?v:''}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
               </section>
 
             </div>
