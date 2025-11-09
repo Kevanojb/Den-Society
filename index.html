@@ -72,7 +72,6 @@
 
       // ---------- CSV parsing (2024/2025 tolerant) ----------
       function splitSmart(raw){
-        // Support comma, tab, or semicolon delimiters
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
@@ -131,7 +130,7 @@
 
         const detectedBoth=detectBothParsFromLines(lines);
 
-        // 2025 roster table (Name/Hdcp) — optional
+        // 2025 roster (Name/Hdcp) — optional
         let playerHeaderRow=-1;
         for(let i=0;i<lines.length;i++){
           if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
@@ -147,7 +146,7 @@
           }
         }
 
-        // Gender hints from “X tee”
+        // Gender hints
         const genderMap={};
         for(const row of lines){
           const nm=(row[0]||'').trim(); if(!nm) continue;
@@ -157,7 +156,7 @@
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table under a "Stableford" header (works for 2024 + 2025)
+        // Totals table under "Stableford"
         let totalsStart=-1;
         for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
         const totals={};
@@ -175,7 +174,7 @@
           }
         }
 
-        // Per-hole retrieval from detailed cards
+        // Per-hole retrieval
         const holeData={};
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
@@ -241,17 +240,14 @@
 
       // ---------- App ----------
       function App(){
-        // Owner Mode
-        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
+        // Owner Mode (kept, but URL/Key UI removed below)
+        const [ownerMode,setOwnerMode]=useState(false);
         useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
-        useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
+        useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); setOwnerMode(v=>!v); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[]);
 
-        // Supabase defaults
+        // Supabase defaults (silent)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
-
-        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
-        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
@@ -265,9 +261,7 @@
           async function boot(){
             try{
               if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,600); return; }
-              const u=normalizeUrl(localStorage.getItem('supa_url')||defaultURL);
-              const k=cleanKey(localStorage.getItem('supa_key')||defaultKEY);
-              const c=makeSupabaseClient(u,k);
+              const c=makeSupabaseClient(defaultURL, defaultKEY);
               if(!c){ setStatusMsg('Invalid URL or key'); return; }
               if(cancelled) return;
               setClient(c);
@@ -322,22 +316,6 @@
           const { error } = await client.storage.from(BUCKET).remove([item.path]);
           if(error){ alert('Delete failed: '+error.message); return; }
           await refreshShared();
-        }
-
-        async function saveSupa(){
-          const u=normalizeUrl((supaURL||defaultURL));
-          const k=cleanKey((supaKEY||defaultKEY));
-          localStorage.setItem('supa_url',u);
-          localStorage.setItem('supa_key',k);
-          setStatusMsg('Checking connection…');
-          try{
-            const c=makeSupabaseClient(u,k);
-            setClient(c);
-            const res=await probe(c);
-            setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
-            if(res.ok) await fetchSeasonWith(c);
-            if(res.ok) await refreshShared(c);
-          }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
         }
 
         // Event + season data
@@ -395,7 +373,6 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          // choose winner(s) among top group by countback (could be multiple if absolutely identical)
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -404,7 +381,6 @@
             else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
-
           let pos=1; const out=[];
           for(const g of groups){
             const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
@@ -504,34 +480,28 @@
 
               {/* Header */}
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
-                <div>
+                <div className="flex-1 min-w-0">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>Supabase: {statusMsg}</p>
-                  <p className="text-xs text-neutral-500 owner-only">Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code></p>
                 </div>
-                <div className="flex gap-2 items-center">
-                  <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
-                  <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-                  <button
-                    onClick={() =>
-                      downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
-                        [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-                          ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])])}
-                    className="btn btn-primary disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
-                  <button onClick={exportSquabbitHandicaps} className="btn btn-indigo disabled:opacity-40" disabled={!players.length} title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
+                <div className="flex gap-2 items-center w-full md:w-auto">
+                  <input
+                    className="px-3 py-2 rounded-xl border border-neutral-300 bg-white flex-1 min-w-0 md:w-[520px]"
+                    value={eventName}
+                    onChange={e=>setEventName(e.target.value)}
+                    placeholder="Event name"
+                  />
+                  <input
+                    type="date"
+                    className="px-3 py-2 rounded-xl border border-neutral-300 bg-white md:w-[220px] w-[180px]"
+                    value={dateStr}
+                    onChange={e=>setDateStr(e.target.value)}
+                  />
                 </div>
               </header>
 
-              {/* Shared Events (Supabase) — compact mobile-friendly */}
+              {/* Past Den Society Golf Games (Supabase Shared) */}
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold">Shared Events (Supabase)</h2>
-                  <div className="owner-only flex gap-2">
-                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaURL} onChange={e=>setSupaURL(e.target.value)} placeholder="Supabase URL" />
-                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} placeholder="Anon key" />
-                    <button onClick={saveSupa} className="btn btn-emerald">Save & Connect</button>
-                  </div>
-                </div>
+                <h2 className="text-lg font-semibold mb-2">Past Den Society Golf Games</h2>
                 <div className="space-y-1">
                   {shared.length===0 && <div className="text-sm text-neutral-500">No shared CSVs yet.</div>}
                   {shared.map(item=>(
@@ -555,6 +525,17 @@
                     <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)importCSV(f);}} />
                     </label>
+                    <button
+                      onClick={() =>
+                        downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
+                          [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
+                            ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])])}
+                      className="btn btn-primary disabled:opacity-40" disabled={!players.length}
+                      title="Export the current event results as CSV"
+                    >
+                      Export Event CSV
+                    </button>
+                    <button onClick={exportSquabbitHandicaps} className="btn btn-indigo disabled:opacity-40" disabled={!players.length} title="Exports First/Last/Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
                   </div>
                 </div>
@@ -568,7 +549,7 @@
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load one from Shared Events.</td></tr>)}
+                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load one from Past Games.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
                           <td>{r.position}</td><td>{r.name}</td><td>{r.gender}</td>
@@ -748,10 +729,10 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Load a shared CSV from <strong>Shared Events (Supabase)</strong> or import one directly.</li>
+                  <li>Load a CSV from <strong>Past Den Society Golf Games</strong> or import one directly.</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
-                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings and Delete buttons.</li>
+                  <li>Owner Mode (Ctrl+Alt+O) reveals delete controls only.</li>
                 </ol>
               </section>
 
