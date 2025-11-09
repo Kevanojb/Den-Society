@@ -60,7 +60,10 @@
       }
 
       // ---------- Name filters ----------
-      const isTeamLike = name => /^(team(\s*\d+)?)$/i.test(name||'') || /^team average$/i.test(name||'') || /^stableford$/i.test(name||'');
+      const isTeamLike = name =>
+        /^(team(\s*\d+)?)$/i.test(name||'') ||
+        /^team average$/i.test(name||'') ||
+        /^stableford$/i.test(name||'');
 
       // ---------- Supabase helpers ----------
       function normalizeUrl(u){
@@ -269,6 +272,34 @@
         return {p3:avg(3),p4:avg(4),p5:avg(5)};
       }
 
+      // ---------- Countback helpers ----------
+      function compareByCountback(a, b) {
+        // a,b have perHole arrays (length up to 18)
+        const pa = (a.perHole||[]).slice(0,18);
+        const pb = (b.perHole||[]).slice(0,18);
+
+        const sum = (arr, s, e) => arr.slice(s, e).reduce((x,y)=>x+(Number(y)||0), 0);
+
+        // Back 9 (10–18)
+        const aB9 = sum(pa, 9, 18), bB9 = sum(pb, 9, 18);
+        if (aB9 !== bB9) return bB9 - aB9;
+
+        // Last 6 (13–18 -> idx 12..18)
+        const aL6 = sum(pa, 12, 18), bL6 = sum(pb, 12, 18);
+        if (aL6 !== bL6) return bL6 - aL6;
+
+        // Last 3 (16–18 -> idx 15..18)
+        const aL3 = sum(pa, 15, 18), bL3 = sum(pb, 15, 18);
+        if (aL3 !== bL3) return bL3 - aL3;
+
+        // Hole-by-hole from 18 back to 1
+        for (let i = 17; i >= 0; i--) {
+          const ai = Number(pa[i])||0, bi = Number(pb[i])||0;
+          if (ai !== bi) return bi - ai; // higher Stableford wins
+        }
+        return 0; // completely tied
+      }
+
       // ---------- App ----------
       function App(){
         // Owner Mode (toggle with Ctrl+Alt+O)
@@ -366,30 +397,50 @@
         }
         function resetSeasonLocal(){ setSeason({}); }
 
-        // This-event table (positions, league pts, next handicap)
+        // ---------- Computed event results with full COUNTBACK ----------
         const computed = useMemo(()=>{
-          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
+          const rows=players.map((p,i)=>({
+            idx:i,name:p.name,gender:p.gender,
+            startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole
+          }));
+          // Base order: total points desc, then back-9 desc (as a first pass)
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
-          // Tie groups
+
+          // Group by TOTAL points only (league points share within group)
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
-            const grp=base.filter(r=>r.points===base[i].points).map(r=>r.idx);
-            for(let k=0;k<grp.length;k++) used.add(grp[k]);
-            groups.push(grp);
+            const grpIdxs = base.filter(r=>r.points===base[i].points).map(r=>r.idx);
+            grpIdxs.forEach(id=>used.add(id));
+            groups.push(grpIdxs);
           }
-          let pos=1; const out=[]; const winnerIdx=base[0].idx;
-          for(let g=0; g<groups.length; g++){
+
+          // Determine winner(s) from TOP group using full countback
+          const topGroupIdxs = groups[0];
+          const topGroup = topGroupIdxs.map(i => rows.find(r=>r.idx===i));
+          // Start with best by back9 already sorted; apply deeper countback
+          let best = [ topGroup[0] ];
+          for (let k=1;k<topGroup.length;k++){
+            const cmp = compareByCountback(topGroup[k], best[0]);
+            if (cmp > 0) { best = [ topGroup[k] ]; }
+            else if (cmp === 0) { best.push(topGroup[k]); }
+          }
+          // If multiple fully tied after all checks => joint winners
+          const winnerIdxSet = new Set(best.map(r=>r.idx));
+
+          // Assign positions + league points + compute next handicaps
+          let pos=1; const out=[];
+          for(const g of groups){
             const start=pos;
             const ptsValue=POINTS_TABLE[start-1]||0;
-            for(let gi=0; gi<groups[g].length; gi++){
-              const i = groups[g][gi];
+            for(const i of g){
               const r=rows.find(x=>x.idx===i);
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,i===winnerIdx);
-              out.push({...r,position:start,leaguePoints:ptsValue,isWinner:i===winnerIdx,...res});
+              const isWinner = winnerIdxSet.has(i) && (g===groups[0]);
+              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
+              out.push({...r,position:start,leaguePoints:ptsValue,isWinner,...res});
             }
-            pos+=groups[g].length;
+            pos+=g.length;
           }
           return out.sort((a,b)=>a.position-b.position);
         },[players]);
@@ -502,7 +553,7 @@
           };
         },[players, effectiveMen, effectiveWomen]);
 
-        // NEW: Export Squabbit (First, Last, Handicap) using nextPlaying
+        // Export Squabbit (First, Last, Handicap) using nextPlaying
         function exportSquabbitHandicaps(){
           if(!computed.length) return;
           const rows=[["First","Last","Handicap"]];
@@ -573,7 +624,6 @@
                     Export Event CSV
                   </button>
 
-                  {/* NEW BUTTON (JSX comment) */}
                   <button
                     onClick={exportSquabbitHandicaps}
                     className="px-4 py-2 rounded-xl bg-indigo-600 text-white disabled:opacity-40"
@@ -640,7 +690,7 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Countback uses Back-9 from the detailed card.</p>
+                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner(s) decided by countback: Back 9 → Last 6 → Last 3 → 18th → 17th… → 1st.</p>
               </section>
 
               {/* Season standings */}
@@ -717,7 +767,7 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events. Table is sorted by Eclectic Total (desc), then Name (asc).</p>
+                <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
               {/* Ratings */}
@@ -763,9 +813,9 @@
                       {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
                           <td className="font-medium">{r.name}</td>
-                          <td>{r.p3.toFixed(1)}</td><td>{ratingLabel(r.p3)}</td>
-                          <td>{r.p4.toFixed(1)}</td><td>{ratingLabel(r.p4)}</td>
-                          <td>{r.p5.toFixed(1)}</td><td>{ratingLabel(r.p5)}</td>
+                          <td>{r.p3.toFixed(1)}</td><td className={ratingColor(r.p3)}>{ratingLabel(r.p3)}</td>
+                          <td>{r.p4.toFixed(1)}</td><td className={ratingColor(r.p4)}>{ratingLabel(r.p4)}</td>
+                          <td>{r.p5.toFixed(1)}</td><td className={ratingColor(r.p5)}>{ratingLabel(r.p5)}</td>
                         </tr>
                       ))}
                       {!ratings.length && (
@@ -817,7 +867,7 @@
                   <li>Import a Squabbit CSV. Pars are auto-detected (single Par row with Out/In/Total or two 9-hole rows).</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap CSV ready for Squabbit.</li>
-                  <li>Toggle Owner Mode (Ctrl+Alt+O) to show Supabase settings.</li>
+                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings; hidden from others.</li>
                 </ol>
               </section>
 
