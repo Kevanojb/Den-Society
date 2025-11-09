@@ -82,7 +82,7 @@
       async function probe(client){
         try{
           const { error, status } = await client.from('season_standings').select('name').limit(1);
-          if(error) return { ok:false, status, msg:error.message };
+        if(error) return { ok:false, status, msg:error.message };
           return { ok:true, status:200, msg:'Connected' };
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
@@ -257,7 +257,13 @@
 
       // ---------- Ratings helpers ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
-      const ratingColor = avg => avg>=3?'text-emerald-700':avg>=2.5?'text-emerald-600':avg>=2?'text-neutral-700':avg>=1.5?'text-amber-700':'text-red-700';
+      const badgeClass = avg =>
+        avg>=3   ? 'bg-emerald-100 text-emerald-800' :
+        avg>=2.5 ? 'bg-emerald-50  text-emerald-700' :
+        avg>=2   ? 'bg-neutral-100 text-neutral-800' :
+        avg>=1.5 ? 'bg-amber-100  text-amber-800' :
+                   'bg-red-100    text-red-800';
+
       const defaultMen = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
       const defaultWomen = [4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
 
@@ -274,21 +280,19 @@
 
       // ---------- Countback helpers ----------
       function compareByCountback(a, b) {
-        // a,b have perHole arrays (length up to 18)
         const pa = (a.perHole||[]).slice(0,18);
         const pb = (b.perHole||[]).slice(0,18);
-
         const sum = (arr, s, e) => arr.slice(s, e).reduce((x,y)=>x+(Number(y)||0), 0);
 
         // Back 9 (10–18)
         const aB9 = sum(pa, 9, 18), bB9 = sum(pb, 9, 18);
         if (aB9 !== bB9) return bB9 - aB9;
 
-        // Last 6 (13–18 -> idx 12..18)
+        // Last 6 (13–18)
         const aL6 = sum(pa, 12, 18), bL6 = sum(pb, 12, 18);
         if (aL6 !== bL6) return bL6 - aL6;
 
-        // Last 3 (16–18 -> idx 15..18)
+        // Last 3 (16–18)
         const aL3 = sum(pa, 15, 18), bL3 = sum(pb, 15, 18);
         if (aL3 !== bL3) return bL3 - aL3;
 
@@ -403,11 +407,11 @@
             idx:i,name:p.name,gender:p.gender,
             startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole
           }));
-          // Base order: total points desc, then back-9 desc (as a first pass)
+          // Base order: total points desc, then back-9 desc
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
 
-          // Group by TOTAL points only (league points share within group)
+          // Group by TOTAL points only
           const groups=[]; const used=new Set();
           for(let i=0;i<base.length;i++){
             if(used.has(base[i].idx)) continue;
@@ -419,15 +423,13 @@
           // Determine winner(s) from TOP group using full countback
           const topGroupIdxs = groups[0];
           const topGroup = topGroupIdxs.map(i => rows.find(r=>r.idx===i));
-          // Start with best by back9 already sorted; apply deeper countback
           let best = [ topGroup[0] ];
           for (let k=1;k<topGroup.length;k++){
             const cmp = compareByCountback(topGroup[k], best[0]);
             if (cmp > 0) { best = [ topGroup[k] ]; }
             else if (cmp === 0) { best.push(topGroup[k]); }
           }
-          // If multiple fully tied after all checks => joint winners
-          const winnerIdxSet = new Set(best.map(r=>r.idx));
+          const winnerIdxSet = new Set(best.map(r=>r.idx)); // joint winners allowed
 
           // Assign positions + league points + compute next handicaps
           let pos=1; const out=[];
@@ -521,7 +523,6 @@
             out.push({
               name:p.name,
               p3:to1(p3), p4:to1(p4), p5:to1(p5),
-              r3:ratingLabel(p3), r4:ratingLabel(p4), r5:ratingLabel(p5),
               total:(p3+p4+p5)
             });
           }
@@ -770,7 +771,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
-              {/* Ratings */}
+              {/* Ratings with pill highlights */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
@@ -813,9 +814,27 @@
                       {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
                           <td className="font-medium">{r.name}</td>
-                          <td>{r.p3.toFixed(1)}</td><td className={ratingColor(r.p3)}>{ratingLabel(r.p3)}</td>
-                          <td>{r.p4.toFixed(1)}</td><td className={ratingColor(r.p4)}>{ratingLabel(r.p4)}</td>
-                          <td>{r.p5.toFixed(1)}</td><td className={ratingColor(r.p5)}>{ratingLabel(r.p5)}</td>
+
+                          <td>{r.p3.toFixed(1)}</td>
+                          <td>
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>
+                              {ratingLabel(r.p3)}
+                            </span>
+                          </td>
+
+                          <td>{r.p4.toFixed(1)}</td>
+                          <td>
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>
+                              {ratingLabel(r.p4)}
+                            </span>
+                          </td>
+
+                          <td>{r.p5.toFixed(1)}</td>
+                          <td>
+                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>
+                              {ratingLabel(r.p5)}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                       {!ratings.length && (
