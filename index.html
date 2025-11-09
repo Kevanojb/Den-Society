@@ -71,14 +71,66 @@
       }
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
-      // ---------- CSV parsing ----------
-      function splitSmart(raw){
-        // Support comma, tab, or semicolon
-        const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
-        return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
+      // ---------- Robust CSV parsing ----------
+      function smartDelimiter(line) {
+        if (line.includes('\t')) return '\t';
+        if (line.includes(';')) return ';';
+        return ',';
+      }
+      function splitCSVLine(line) {
+        const d = smartDelimiter(line);
+        if (d !== ',') {
+          return line.split(d).map(s => (s||'').replace(/^\uFEFF/, '').replace(/^"|"$/g,'').trim());
+        }
+        // Proper CSV with quotes/double-quotes
+        const out = [];
+        let cur = '', inQ = false;
+        for (let i=0;i<line.length;i++){
+          const ch = line[i];
+          if (ch === '"'){
+            if (inQ && line[i+1] === '"'){ cur += '"'; i++; }
+            else inQ = !inQ;
+          } else if (ch === ',' && !inQ){
+            out.push(cur.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+            cur = '';
+          } else {
+            cur += ch;
+          }
+        }
+        out.push(cur.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+        return out;
+      }
+      function splitSmartRows(text){
+        const rows = text.replace(/\r/g,'').split('\n');
+        return rows.map(splitCSVLine);
       }
       function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
 
+      // Player header row tolerant to Hdcp/Hcap/HCP/Handicap (case-insensitive)
+      function findPlayerHeaderRow(lines){
+        const isName = v => /^name$/i.test(String(v||'').trim());
+        const isHcap = v => /^(hd?c?p|hcap|hcp|handicap)$/i.test(String(v||'').trim());
+        for (let i=0;i<lines.length;i++){
+          const r = lines[i]||[];
+          for (let c=0;c<Math.max(3,r.length);c++){
+            if (isName(r[c]) && isHcap(r[c+1])) return i;
+          }
+        }
+        return -1;
+      }
+
+      // Detect "Stableford" section header (case-insensitive)
+      function rowHasStablefordToken(row){
+        return (row||[]).some(x => /^stableford(\s+totals)?$/i.test(String(x||'').trim()));
+      }
+      function findStablefordTotalsStart(lines){
+        for (let i=0;i<lines.length;i++){
+          if (rowHasStablefordToken(lines[i])) return i;
+        }
+        return -1;
+      }
+
+      // Detect Men/Women pars from CSV. If only one set found, use for both.
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
@@ -110,37 +162,30 @@
         return { men: detected||null, women: detected||null };
       }
 
+      // Per-hole “Stableford” row (case-insensitive), 0..6 or P / "\" → 0; pad to 18
       function readStablefordPerHole(row){
-        // Find the "Stableford" token anywhere on the row
         let start=-1;
-        for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
-        if(start<0) return null;
-
+        for(let i=0;i<row.length;i++){ if(/^stableford$/i.test(String(row[i]||'').trim())){ start=i; break; } }
+        if(start<0) return Array(18).fill(0);
         const vals=[];
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
           if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
-          // Only accept realistic per-hole Stableford numbers
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
-        // If we didn’t get 18, don’t kill the render — pad with zeros
         while(vals.length<18) vals.push(0);
         return vals.slice(0,18);
       }
 
       function parseSquabbitCSV(text){
-        const rows=text.replace(/\r/g,'').split('\n');
-        const lines=rows.map(splitSmart);
+        const lines = splitSmartRows(text);
 
         const detectedBoth=detectBothParsFromLines(lines);
 
         // Players
-        let playerHeaderRow=-1;
-        for(let i=0;i<lines.length;i++){
-          if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
-        }
+        const playerHeaderRow = findPlayerHeaderRow(lines);
         const players=[];
         if(playerHeaderRow>=0){
           for(let i=playerHeaderRow+1;i<lines.length;i++){
@@ -152,44 +197,46 @@
           }
         }
 
-        // Gender
+        // Gender hints
         const genderMap={};
         for(const row of lines){
           const nm=(row[0]||'').trim(); if(!nm) continue;
           const tee=String(row[1]||'').toLowerCase();
-          if(/women|ladies/.test(tee)) genderMap[nm]='F';
-          else if(genderMap[nm]==null) genderMap[nm]='M';
+          if (/(women|ladies|women's|ladies'|womens)/.test(tee)) genderMap[nm]='F';
+          else if (genderMap[nm]==null) genderMap[nm]='M';
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table (section after a "Stableford" header)
-        let stablefordSectionRow=-1;
-        for(let i=0;i<lines.length;i++){ if((lines[i][0]||'').trim()==='Stableford'){ stablefordSectionRow=i; break; } }
+        // Totals (first numeric after name)
+        const stablefordSectionRow = findStablefordTotalsStart(lines);
         const totals={};
         if(stablefordSectionRow>=0){
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
             const nm=(lines[i][0]||'').trim();
             if(!nm) break;
             if(isTeamLike(nm)) continue;
-            const r1=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(r1)) totals[nm]=r1;
+            let val = NaN;
+            for(let k=1;k<lines[i].length;k++){
+              const maybe = parseFloat(String(lines[i][k]||'').replace(/[^0-9.\-]/g,''));
+              if(Number.isFinite(maybe)){ val=maybe; break; }
+            }
+            if(Number.isFinite(val)) totals[nm]=val;
           }
         }
 
-        // Per-hole from detailed cards
+        // Per-hole rows next to each player
         const holeData={};
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
             if((lines[i][0]||'').trim()===p.name){
               const stRow=lines[i+1]||[];
-              if(!stRow.some(c=>String(c).trim().toLowerCase()==='stableford')) continue;
+              if(!stRow.some(c=>/^stableford$/i.test(String(c||'').trim()))) continue;
               const perHole=readStablefordPerHole(stRow);
               const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
               holeData[p.name]={perHole, back9};
               break;
             }
           }
-          if(!holeData[p.name]) holeData[p.name]={perHole:Array(18).fill(0), back9:0};
         }
 
         return {
@@ -312,8 +359,6 @@
         const [season,setSeason]=useState({});
 
         // Pars state
-        const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-        const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
         const [detectedMen,setDetectedMen]=useState(null);
         const [detectedWomen,setDetectedWomen]=useState(null);
         const [useDetected,setUseDetected]=useState(true);
@@ -325,17 +370,13 @@
         const effectiveWomen=useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
 
         async function importCSV(file){
-          try{
-            const text=await file.text();
-            const parsed=parseSquabbitCSV(text);
-            setPlayers(parsed.players||[]);
-            setDetectedMen(parsed.detectedMen||null);
-            setDetectedWomen(parsed.detectedWomen||null); // ← fixed
-            if(parsed.detectedMen){ setUseDetected(true); }
-            if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
-          }catch(e){
-            alert("Couldn't read CSV: "+(e?.message||e));
-          }
+          const text=await file.text();
+          const parsed=parseSquabbitCSV(text);
+          setPlayers(parsed.players||[]);
+          setDetectedMen(parsed.detectedMen||null);
+          setDetectedWomen(parsed.detectedWomen||null);
+          if(parsed.detectedMen){ setUseDetected(true); }
+          if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
         }
 
         function importManyToLibrary(fileList){
@@ -351,29 +392,18 @@
               items=addToLibraryItems(items,name,date,csv);
               setLibrary(items);
             };
-            reader.onerror=()=>alert("Couldn't read file: "+(f.name||'file'));
             reader.readAsText(f);
           }
         }
 
         function resetSeasonLocal(){ setSeason({}); }
 
-        // Computed (with countback winner)
-        function compareByCountback(a,b){
-          const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
-          const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
-          const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
-          const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
-          const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
-          for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
-          return 0;
-        }
-
+        // Computed with countback winner
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          // Use countback within equal-points groups
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
+          const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
+          // tie groups by points
           const groups=[]; const used=new Set();
           for(const r of base){
             if(used.has(r.idx)) continue;
@@ -381,7 +411,7 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          // Decide winners among top group by countback
+          // countback only for the top group to decide winner bonus
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -491,31 +521,23 @@
           setLibrary(items);
         }
         function loadLibraryItem(item){
-          try{
-            const parsed=parseSquabbitCSV(item.csv);
-            if(!parsed.players.length){
-              // Fallback to our own export format
-              const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
-              const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
-              const players=[];
-              if(idxHeader>=0){
-                for(let i=idxHeader+1;i<lines.length;i++){
-                  const r=lines[i]; if(!r||!r[0]) break;
-                  players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
-                }
+          const parsed=parseSquabbitCSV(item.csv);
+          if(!parsed.players.length){
+            const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
+            const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
+            const players=[];
+            if(idxHeader>=0){
+              for(let i=idxHeader+1;i<lines.length;i++){
+                const r=lines[i]; if(!r||!r[0]) break;
+                players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
               }
-              setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
-            }else{
-              setPlayers(parsed.players||[]);
-              setDetectedMen(parsed.detectedMen||null);
-              setDetectedWomen(parsed.detectedWomen||null); // ← fixed
-              setUseDetected(true);
             }
-            setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
-            window.scrollTo({top:0,behavior:'smooth'});
-          }catch(e){
-            alert("Couldn't load saved CSV: "+(e?.message||e));
+            setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
+          }else{
+            setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen||null); setUseDetected(true);
           }
+          setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
+          window.scrollTo({top:0,behavior:'smooth'});
         }
         function promptRename(item){ const nn=prompt("Rename event:", item.name||"Event"); if(nn&&nn.trim()){ setLibrary(renameLibraryItem(library,item.id,nn.trim())); } }
         function removeItem(item){ if(confirm(`Delete "${item.name}" from Library?`)){ setLibrary(deleteLibraryItem(library,item.id)); } }
@@ -552,7 +574,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Saved Events (Library)</h2>
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
                     <label className="btn btn-outline cursor-pointer">Import to Library
                       <input type="file" accept=".csv" multiple className="hidden" onChange={e=>{ if(e.target.files?.length){ importManyToLibrary(e.target.files); e.target.value=''; } }} />
                     </label>
@@ -583,10 +605,7 @@
                             <button className="btn btn-danger" onClick={()=>removeItem(item)}>Delete</button>
                             <button className="btn btn-outline" onClick={()=>{
                               const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
-                              const a=document.createElement('a');
-                              a.href=URL.createObjectURL(blob);
-                              a.download = `${(item.name||'Event')}.csv`;
-                              a.click();
+                              const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${item.name||'Event'}.csv`; a.click();
                             }}>Download</button>
                           </td>
                         </tr>
@@ -702,9 +721,7 @@
               {/* Ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-semibold">
-                    {`Ratings — Par 3 / Par 4 / Par 5 — ${eventName || "This Event"}`}
-                  </h2>
+                  <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 ({eventName || "This Event"})</h2>
                   <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
                     onClick={()=>{
                       const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
@@ -715,26 +732,29 @@
                     }}>Export Ratings</button>
                 </div>
 
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800 mb-4">
-                  <div className="font-medium mb-1">How to read this</div>
-                  <ul className="list-disc pl-5 space-y-0.5">
-                    <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
-                    <li>We average your per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
-                    <li>Colour badges:
-                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>,
-                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
-                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>,
-                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>,
-                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-red-100 text-red-800">Struggle &lt; 1.5</span>.
+                {/* Ratings explanation / legend */}
+                <div className="mb-4 rounded-xl border p-3 bg-neutral-50 text-sm">
+                  <div className="font-medium mb-1">How to read this:</div>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li><span className="mono">Stableford</span> guide: <span className="chip mono">2 pts</span> = net par, <span className="chip mono">3 pts</span> = net birdie, <span className="chip mono">4 pts</span> = net eagle.</li>
+                    <li>Badge meaning:
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-red-100 text-red-800">Struggle &lt; 1.5</span>
                     </li>
-                    <li><strong>Why it helps:</strong> quick read on where strokes are leaking:
-                      <span className="block ml-4">Low <em>Par-3</em> avg → tee-shot precision &amp; short-game.</span>
-                      <span className="block ml-4">Low <em>Par-4</em> avg → driving &amp; approach consistency.</span>
-                      <span className="block ml-4">Low <em>Par-5</em> avg → strategy, wedges, avoid 3-putts.</span>
+                    <li><span className="font-medium">Why it helps:</span> quick read on where strokes are leaking:
+                      <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                        <div>Low <strong>Par-3</strong> avg → tee-shot precision / short-game focus.</div>
+                        <div>Low <strong>Par-4</strong> avg → driving / approach consistency.</div>
+                        <div>Low <strong>Par-5</strong> avg → strategy (lay-up vs go), wedge play, or 3-putt avoidance.</div>
+                      </div>
                     </li>
                   </ul>
                 </div>
 
+                {/* Pars used */}
                 <div className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                   <div className="mono text-sm overflow-auto">
@@ -742,6 +762,8 @@
                     <div className="flex items-center gap-2"><span className="chip mono">Women</span> <span>{effectiveWomen.join(', ')}</span></div>
                   </div>
                 </div>
+
+                {/* Ratings table */}
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -803,6 +825,26 @@
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
                   <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings; hidden from others.</li>
                 </ol>
+              </section>
+
+              {/* Settings (Owner only) */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
+                <h2 className="text-lg font-semibold mb-2">Settings</h2>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm block mb-1">Supabase URL</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={saveSupa} className="btn btn-emerald">Save & Connect</button>
+                  <button onClick={()=>client && fetchSeasonWith(client)} className="btn btn-outline">Reload Season</button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Toggle Owner Mode with Ctrl+Alt+O.</p>
               </section>
 
             </div>
