@@ -16,6 +16,7 @@
       .mono{font-variant-numeric:tabular-nums}
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
       .btn{padding:0.5rem 0.75rem;border-radius:0.75rem}
+      .btn-xs{padding:0.25rem 0.5rem;border-radius:0.5rem;font-size:.75rem;line-height:1rem}
       .btn-primary{background:#111;color:#fff}
       .btn-indigo{background:#4f46e5;color:#fff}
       .btn-emerald{background:#059669;color:#fff}
@@ -37,10 +38,7 @@
       const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
       const to1 = x => Math.round((Number(x)||0)*10)/10;
-      const prettyBytes = n => n>=1024*1024 ? (n/1048576).toFixed(1)+' MB' : n>=1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
-      const prettyDate = (iso) => { try { const d=new Date(iso); return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});} catch { return iso||''; } };
       function splitFirstLast(fullName){ const raw=(fullName||'').trim().replace(/\s+/g,' '); if(!raw) return {first:'',last:''}; const parts=raw.split(' '); if(parts.length===1) return {first:parts[0],last:''}; const last=parts.pop(); return {first:parts.join(' '), last}; }
-      const norm = s => (s||'').toString().trim();
 
       // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
@@ -72,9 +70,9 @@
       }
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
-      // ---------- CSV parsing ----------
+      // ---------- CSV parsing (2024/2025 tolerant) ----------
       function splitSmart(raw){
-        // Support comma, tab, or semicolon
+        // Support comma, tab, or semicolon delimiters
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
@@ -112,40 +110,19 @@
       }
 
       function readStablefordPerHole(row){
-        // Find the "Stableford" token anywhere on the row
         let start=-1;
         for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
         if(start<0) return null;
-
         const vals=[];
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
           if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
-          // Only accept realistic per-hole Stableford numbers
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
         while(vals.length<18) vals.push(0);
         return vals.slice(0,18);
-      }
-
-      // 2024 "Stableford" summary table: header "Player | Round 1 | Total"
-      function parse2024Summary(lines){
-        const headerIdx = lines.findIndex(r => norm(r[0]).toLowerCase()==='player' && /round/i.test(norm(r[1])) && /total/i.test(norm(r[2])));
-        if(headerIdx<0) return [];
-        const out=[];
-        for(let i=headerIdx+1;i<lines.length;i++){
-          const row=lines[i]; if(!row || !row.length) break;
-          const player=norm(row[0]); if(!player) break;
-          if(isTeamLike(player)) continue;
-          // Some rows can be team blocks later; stop when we hit "Team Average" or blank
-          if(/^team\s*average$/i.test(player)) break;
-          const total = Number.isFinite(toNum(row[2])) ? toNum(row[2]) : toNum(row[1]);
-          if(!Number.isFinite(total)) break;
-          out.push({name:player, points:total});
-        }
-        return out;
       }
 
       function parseSquabbitCSV(text){
@@ -154,64 +131,55 @@
 
         const detectedBoth=detectBothParsFromLines(lines);
 
-        // --- Try 2025 layout (Name / Hdcp table) ---
+        // 2025 roster table (Name/Hdcp) — optional
         let playerHeaderRow=-1;
         for(let i=0;i<lines.length;i++){
-          if(norm(lines[i][0])==='Name' && norm(lines[i][1])==='Hdcp'){ playerHeaderRow=i; break; }
+          if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
         }
         const players=[];
         if(playerHeaderRow>=0){
           for(let i=playerHeaderRow+1;i<lines.length;i++){
-            const name=norm(lines[i][0]);
+            const name=(lines[i][0]||'').trim();
             if(!name) break;
             if(isTeamLike(name)) continue;
-            const hcap=parseFloat(norm(lines[i][1]));
+            const hcap=parseFloat((lines[i][1]||'').trim());
             if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
-          }
-        } else {
-          // --- Fallback: 2024 layout (Stableford summary table) ---
-          const list2024 = parse2024Summary(lines);
-          for(const p of list2024){
-            players.push({ name:p.name, handicap:0, gender:'M', _summaryPoints:p.points });
           }
         }
 
-        // Gender from tee rows where present
+        // Gender hints from “X tee”
         const genderMap={};
         for(const row of lines){
-          const nm=norm(row[0]); if(!nm) continue;
+          const nm=(row[0]||'').trim(); if(!nm) continue;
           const tee=String(row[1]||'').toLowerCase();
           if(/women|ladies|red tee/.test(tee)) genderMap[nm]='F';
           else if(genderMap[nm]==null) genderMap[nm]='M';
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table (2025) OR from 2024 summary fallback
-        let stablefordSectionRow=-1;
-        for(let i=0;i<lines.length;i++){ if(norm(lines[i][0])==='Stableford'){ stablefordSectionRow=i; break; } }
+        // Totals table under a "Stableford" header (works for 2024 + 2025)
+        let totalsStart=-1;
+        for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
         const totals={};
-        if(stablefordSectionRow>=0){
-          for(let i=stablefordSectionRow+2;i<lines.length;i++){
-            const nm=norm(lines[i][0]);
-            if(!nm) break;
-            if(isTeamLike(nm)) continue;
-            const r1=parseFloat(norm(lines[i][1]));
-            if(!Number.isNaN(r1)) totals[nm]=r1;
+        if(totalsStart>=0){
+          for(let i=totalsStart+1;i<lines.length;i++){
+            const row=lines[i];
+            const a=(row[0]||'').trim();
+            const b=toNum(row[1]);
+            const c=toNum(row[2]);
+            if(!a){ if(i>totalsStart+1) break; else continue; }
+            if(isTeamLike(a)) continue;
+            const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
+            if(Number.isFinite(pts)) totals[a]=pts;
+            if(!players.some(p=>p.name===a)) players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
           }
         }
-        // If we didn’t find totals (2024 mode), use the summary
-        if(Object.keys(totals).length===0){
-          const list2024 = parse2024Summary(lines);
-          for(const r of list2024){ totals[r.name]=r.points; }
-        }
 
-        // Per-hole from detailed cards
+        // Per-hole retrieval from detailed cards
         const holeData={};
         for(const p of players){
-          // In 2024 detailed blocks, the name row is "<Name> | Yellow tee | <handicap>"
-          // The next row has "Stableford | <hcp> | h1 | h2 ..."
           for(let i=0;i<lines.length-1;i++){
-            if(norm(lines[i][0])===p.name){
+            if((lines[i][0]||'').trim()===p.name){
               const stRow=lines[i+1]||[];
               if(!stRow.some(c=>String(c).trim().toLowerCase()==='stableford')) continue;
               const perHole=readStablefordPerHole(stRow);
@@ -230,7 +198,7 @@
             name:p.name,
             gender:p.gender,
             handicap:p.handicap,
-            points: totals[p.name] ?? p._summaryPoints ?? 0,
+            points: totals[p.name]||0,
             back9: holeData[p.name]?.back9||0,
             perHole: holeData[p.name]?.perHole||[]
           }))
@@ -271,59 +239,6 @@
         return 0;
       }
 
-      // ---------- Library (localStorage) ----------
-      const LIB_KEY='den_saved_events_v1';
-      const MAX_SAVED=16;
-      function loadLibrary(){ try{ const raw=localStorage.getItem(LIB_KEY); const arr=raw?JSON.parse(raw):[]; return Array.isArray(arr)?arr:[]; }catch{ return []; } }
-      function saveLibrary(items){ try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0,MAX_SAVED))); }catch{} }
-      function addToLibraryItems(items, name, date, csv){
-        const id=Date.now()+'_'+Math.random().toString(36).slice(2,8);
-        const size=new Blob([csv]).size;
-        const rec={id,name:name||'Event',date:date||new Date().toISOString().slice(0,10),csv,size,savedAt:new Date().toISOString()};
-        const next=[rec,...items].slice(0,MAX_SAVED); saveLibrary(next); return next;
-      }
-      function renameLibraryItem(items,id,newName){ const next=items.map(it=>it.id===id?{...it,name:newName}:it); saveLibrary(next); return next; }
-      function deleteLibraryItem(items,id){ const next=items.filter(it=>it.id!==id); saveLibrary(next); return next; }
-
-      // ---------- Shared Library (Supabase Storage) ----------
-      // Make sure you create a public bucket in Supabase Storage named:
-      //   den-events
-      // with a folder "events/" and RLS policies that allow anonymous read & write if you want uploads from this page.
-      const STORAGE_BUCKET = 'den-events';
-      const STORAGE_PREFIX = 'events/';
-
-      async function listSharedEvents(client){
-        try{
-          const { data, error } = await client.storage.from(STORAGE_BUCKET).list(STORAGE_PREFIX, { limit: 100, sortBy: { column: 'name', order: 'desc' }});
-          if(error) throw error;
-          // data is array of { name, id?, created_at?, metadata.size }
-          return (data||[])
-            .filter(f=>f.name.toLowerCase().endsWith('.csv'))
-            .map(f=>({
-              name: f.name.replace(/\.csv$/i,''),
-              path: STORAGE_PREFIX + f.name,
-              size: f.metadata?.size || 0,
-              updatedAt: f.updated_at || f.created_at || null
-            }));
-        }catch(e){ console.error(e); return []; }
-      }
-
-      async function downloadSharedCSV(client, path){
-        const { data, error } = await client.storage.from(STORAGE_BUCKET).download(path);
-        if(error) throw error;
-        return await data.text();
-      }
-
-      async function uploadSharedCSV(client, name, csv){
-        const safe = name.replace(/[^\w\-+@(). ]/g,'_').slice(0,80) || 'Event';
-        const filename = `${safe}.csv`;
-        const path = STORAGE_PREFIX + filename;
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const { error } = await client.storage.from(STORAGE_BUCKET).upload(path, blob, { upsert: true, cacheControl: '3600' });
-        if(error) throw error;
-        return path;
-      }
-
       // ---------- App ----------
       function App(){
         // Owner Mode
@@ -334,10 +249,16 @@
         // Supabase defaults
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
+
+        // Shared events (Supabase Storage)
+        const BUCKET='den-events';
+        const PREFIX='events';
+        const [shared,setShared]=useState([]); // [{name, file, path}]
 
         useEffect(()=>{
           let cancelled=false;
@@ -353,12 +274,55 @@
               const res=await probe(c);
               if(cancelled) return;
               setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
-              if(res.ok) { await fetchSeasonWith(c); await refreshShared(c); }
+              if(res.ok) await fetchSeasonWith(c);
+              if(res.ok) await refreshShared(c);
             }catch(e){ if(!cancelled) setStatusMsg(`Error: ${String(e?.message||e)}`); }
           }
           boot();
           return()=>{cancelled=true;};
         },[]);
+
+        async function refreshShared(c=client){
+          if(!c) return;
+          const { data, error } = await c.storage.from(BUCKET).list(PREFIX, { limit: 1000, sortBy: { column:'name', order:'asc' }});
+          if(error){ console.warn(error); return; }
+          const items=(data||[])
+            .filter(x=>!x.name.startsWith('.') && /\.csv$/i.test(x.name))
+            .map(x=>({ name: x.name.replace(/\.csv$/i,''), file: x.name, path: `${PREFIX}/${x.name}` }));
+          setShared(items);
+        }
+
+        async function loadShared(item){
+          if(!client) return;
+          const { data, error } = await client.storage.from(BUCKET).download(item.path);
+          if(error){ alert('Download failed: '+error.message); return; }
+          const text = await data.text();
+          const parsed = parseSquabbitCSV(text);
+          setPlayers(parsed.players||[]);
+          setDetectedMen(parsed.detectedMen||null);
+          setDetectedWomen(parsed.detectedWomen||null);
+          setUseDetected(true);
+          setEventName(item.name);
+          window.scrollTo({top:0,behavior:'smooth'});
+        }
+
+        async function downloadShared(item){
+          if(!client) return;
+          const { data, error } = await client.storage.from(BUCKET).download(item.path);
+          if(error){ alert('Download failed: '+error.message); return; }
+          const a=document.createElement('a');
+          a.href=URL.createObjectURL(data);
+          a.download=item.file;
+          a.click();
+        }
+
+        async function deleteShared(item){
+          if(!client) return;
+          if(!confirm(`Delete "${item.file}" from shared events?`)) return;
+          const { error } = await client.storage.from(BUCKET).remove([item.path]);
+          if(error){ alert('Delete failed: '+error.message); return; }
+          await refreshShared();
+        }
 
         async function saveSupa(){
           const u=normalizeUrl((supaURL||defaultURL));
@@ -371,7 +335,8 @@
             setClient(c);
             const res=await probe(c);
             setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
-            if(res.ok) { await fetchSeasonWith(c); await refreshShared(c); }
+            if(res.ok) await fetchSeasonWith(c);
+            if(res.ok) await refreshShared(c);
           }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
         }
 
@@ -380,47 +345,6 @@
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
-
-        // Shared Library state
-        const [shared,setShared]=useState([]);           // [{name, path, size, updatedAt}]
-        const [loadingShared,setLoadingShared]=useState(false);
-
-        async function refreshShared(c){
-          if(!c) return;
-          setLoadingShared(true);
-          const list = await listSharedEvents(c);
-          setShared(list);
-          setLoadingShared(false);
-        }
-
-        async function publishCurrentToShared(){
-          if(!client || !players.length) return alert('Nothing to publish.');
-          const rows=[["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
-          computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]));
-          const csv=rows.map(r=>r.join(',')).join('\n');
-          try{
-            await uploadSharedCSV(client, `${eventName} (${dateStr})`, csv);
-            await refreshShared(client);
-            alert('Published to Shared Library.');
-          }catch(e){
-            alert('Upload failed: '+(e?.message||e));
-          }
-        }
-
-        async function loadSharedItem(item){
-          try{
-            const csv = await downloadSharedCSV(client, item.path);
-            const parsed = parseSquabbitCSV(csv);
-            setPlayers(parsed.players||[]);
-            setDetectedMen(parsed.detectedMen||null);
-            setDetectedWomen(parsed.detectedWomen||null);
-            setUseDetected(true);
-            setEventName(item.name || 'Event');
-            window.scrollTo({top:0,behavior:'smooth'});
-          }catch(e){
-            alert("Couldn't load shared CSV: "+(e?.message||e));
-          }
-        }
 
         // Pars state
         const [detectedMen,setDetectedMen]=useState(null);
@@ -447,30 +371,21 @@
           }
         }
 
-        function importManyToLibrary(fileList){
-          const arr=Array.from(fileList||[]);
-          if(!arr.length) return;
-          let items=loadLibrary();
-          for(const f of arr){
-            const reader=new FileReader();
-            reader.onload=e=>{
-              const csv=String(e.target.result||'');
-              const name=(f.name||'Event').replace(/\.[^.]+$/,'');
-              const date=new Date().toISOString().slice(0,10);
-              items=addToLibraryItems(items,name,date,csv);
-              setLibrary(items);
-            };
-            reader.onerror=()=>alert("Couldn't read file: "+(f.name||'file'));
-            reader.readAsText(f);
-          }
-        }
-
         function resetSeasonLocal(){ setSeason({}); }
 
-        // Computed (with countback winner)
+        // Computed event with countback winner(s)
+        function compareByCountback(a,b){
+          const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
+          const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
+          const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
+          const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
+          const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
+          for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
+          return 0;
+        }
+
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          // Sort by points, then countback
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
           if(!base.length) return [];
           const groups=[]; const used=new Set();
@@ -480,7 +395,7 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          // Work out winners among top group
+          // choose winner(s) among top group by countback (could be multiple if absolutely identical)
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -489,6 +404,7 @@
             else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
+
           let pos=1; const out=[];
           for(const g of groups){
             const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
@@ -503,7 +419,7 @@
           return out.sort((a,b)=>a.position-b.position);
         },[players]);
 
-        // Supabase I/O
+        // Supabase season I/O
         async function fetchSeasonWith(c){
           const {data,error}=await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
           if(error){ setStatusMsg(`Error: ${error.message}`); return; }
@@ -578,47 +494,6 @@
           downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
         }
 
-        // Local Library
-        const [library,setLibrary]=useState(()=>loadLibrary());
-        function saveCurrentEventToLibrary(){
-          if(!players.length) return;
-          const name=prompt("Name for this event in Library:", eventName || "Event") || (eventName || "Event");
-          const rows=[["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
-          computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]));
-          const csv=rows.map(r=>r.map(csvEscape).join(",")).join("\n");
-          const items=addToLibraryItems(library,name,dateStr,csv);
-          setLibrary(items);
-        }
-        function loadLibraryItem(item){
-          try{
-            const parsed=parseSquabbitCSV(item.csv);
-            if(!parsed.players.length){
-              // Fallback to our own export format
-              const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
-              const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
-              const players=[];
-              if(idxHeader>=0){
-                for(let i=idxHeader+1;i<lines.length;i++){
-                  const r=lines[i]; if(!r||!r[0]) break;
-                  players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
-                }
-              }
-              setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
-            }else{
-              setPlayers(parsed.players||[]);
-              setDetectedMen(parsed.detectedMen||null);
-              setDetectedWomen(parsed.detectedWomen||null);
-              setUseDetected(true);
-            }
-            setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
-            window.scrollTo({top:0,behavior:'smooth'});
-          }catch(e){
-            alert("Couldn't load saved CSV: "+(e?.message||e));
-          }
-        }
-        function promptRename(item){ const nn=prompt("Rename event:", item.name||"Event"); if(nn&&nn.trim()){ setLibrary(renameLibraryItem(library,item.id,nn.trim())); } }
-        function removeItem(item){ if(confirm(`Delete "${item.name}" from Library?`)){ setLibrary(deleteLibraryItem(library,item.id)); } }
-
         // Derived season views
         const seasonSortedByPoints=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name)),[season]);
         const seasonSortedByEclectic=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name)),[season]);
@@ -647,95 +522,28 @@
                 </div>
               </header>
 
-              {/* SHARED LIBRARY (Supabase Storage) */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-semibold">Shared Library (everyone)</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <button className="btn btn-outline owner-only" onClick={()=>refreshShared(client)} disabled={!client || loadingShared}>{loadingShared?'Refreshing…':'Refresh'}</button>
-                    <button className="btn btn-emerald disabled:opacity-40" disabled={!client || !players.length} onClick={publishCurrentToShared}>Publish Current Event → Shared</button>
+              {/* Shared Events (Supabase) — compact mobile-friendly */}
+              <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold">Shared Events (Supabase)</h2>
+                  <div className="owner-only flex gap-2">
+                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaURL} onChange={e=>setSupaURL(e.target.value)} placeholder="Supabase URL" />
+                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} placeholder="Anon key" />
+                    <button onClick={saveSupa} className="btn btn-emerald">Save & Connect</button>
                   </div>
                 </div>
-                {!client && <p className="text-xs text-red-600 mb-2">Not connected to Supabase. Open Owner Mode (Ctrl+Alt+O), set URL/key, and click “Save & Connect”.</p>}
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th style={{width:'40%'}}>Name</th>
-                        <th style={{width:'20%'}}>Last Updated</th>
-                        <th style={{width:'15%'}}>Size</th>
-                        <th style={{width:'25%'}}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(!shared || shared.length===0) && (
-                        <tr><td colSpan="4" className="py-3 text-neutral-500">No shared events yet.</td></tr>
-                      )}
-                      {shared.map(item=>(
-                        <tr key={item.path} className="border-b">
-                          <td className="font-medium">{item.name}</td>
-                          <td>{item.updatedAt ? prettyDate(item.updatedAt) : '—'}</td>
-                          <td className="mono">{prettyBytes(item.size)}</td>
-                          <td className="flex flex-wrap gap-2 py-2">
-                            <button className="btn btn-outline" onClick={()=>loadSharedItem(item)} disabled={!client}>Load</button>
-                            <button className="btn btn-outline" onClick={async ()=>{
-                              try{
-                                const csv = await downloadSharedCSV(client, item.path);
-                                const blob = new Blob([csv],{type:"text/csv;charset=utf-8;"});
-                                const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${item.name||'Event'}.csv`; a.click();
-                              }catch(e){ alert('Download failed: '+(e?.message||e)); }
-                            }} disabled={!client}>Download</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-neutral-500 mt-2">These files live in Supabase Storage bucket <code class="mono">{STORAGE_BUCKET}/{STORAGE_PREFIX}</code>. Set public read/write policies as needed.</p>
-              </section>
-
-              {/* SAVED EVENTS (LOCAL LIBRARY) */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-semibold">Saved Events (This Browser)</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <label className="btn btn-outline cursor-pointer">Import to Library
-                      <input type="file" accept=".csv" multiple className="hidden" onChange={e=>{ if(e.target.files?.length){ importManyToLibrary(e.target.files); e.target.value=''; } }} />
-                    </label>
-                    <button className="btn btn-emerald disabled:opacity-40" disabled={!players.length} onClick={saveCurrentEventToLibrary}>Save Current Event → Library</button>
-                  </div>
-                </div>
-                <p className="text-xs text-neutral-500 mb-3">Keeps up to 16 CSVs locally on this device.</p>
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th style={{width:'40%'}}>Name</th>
-                        <th style={{width:'15%'}}>Date</th>
-                        <th style={{width:'15%'}}>Size</th>
-                        <th style={{width:'30%'}}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {library.length===0 && (<tr><td colSpan="4" className="py-3 text-neutral-500">No saved events yet.</td></tr>)}
-                      {library.map(item=>(
-                        <tr key={item.id} className="border-b">
-                          <td className="font-medium">{item.name}</td>
-                          <td>{prettyDate(item.date)}</td>
-                          <td className="mono">{prettyBytes(item.size||item.csv.length)}</td>
-                          <td className="flex flex-wrap gap-2 py-2">
-                            <button className="btn btn-outline" onClick={()=>loadLibraryItem(item)}>Load</button>
-                            <button className="btn btn-outline" onClick={()=>promptRename(item)}>Rename</button>
-                            <button className="btn btn-danger" onClick={()=>removeItem(item)}>Delete</button>
-                            <button className="btn btn-outline" onClick={()=>{
-                              const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
-                              const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download = `${(item.name||'Event')}.csv`; a.click();
-                            }}>Download</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-1">
+                  {shared.length===0 && <div className="text-sm text-neutral-500">No shared CSVs yet.</div>}
+                  {shared.map(item=>(
+                    <div key={item.path} className="flex items-center justify-between border border-neutral-200 rounded-xl px-3 py-2">
+                      <div className="truncate pr-3">{item.name}</div>
+                      <div className="flex gap-2">
+                        <button className="btn btn-xs btn-outline" onClick={()=>loadShared(item)}>Load</button>
+                        <button className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
+                        <button className="btn btn-xs btn-danger owner-only" onClick={()=>deleteShared(item)}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -752,7 +560,7 @@
                 </div>
                 <div className="flex items-center gap-2 mb-4">
                   <span className="chip mono">{eventName || "Untitled Event"}</span>
-                  <span className="chip mono">{prettyDate(dateStr)}</span>
+                  <span className="chip mono">{new Date(dateStr).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</span>
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -760,7 +568,7 @@
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV to see the event.</td></tr>)}
+                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load one from Shared Events.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
                           <td>{r.position}</td><td>{r.name}</td><td>{r.gender}</td>
@@ -771,7 +579,7 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner decided by countback: Back 9 → Last 6 → Last 3 → 18th → 17th… → 1st.</p>
+                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner(s) by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st.</p>
               </section>
 
               {/* Season standings */}
@@ -871,9 +679,9 @@
                       <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-red-100 text-red-800">Struggle &lt; 1.5</span>.
                     </li>
                     <li><strong>Why it helps:</strong> quick read on where strokes are leaking:
-                      <span className="block ml-4"> High points <em>Par-3</em> avg → tee-shot precision &amp; short-game.</span>
-                      <span className="block ml-4"> High points <em>Par-4</em> avg → driving &amp; approach consistency.</span>
-                      <span className="block ml-4"> High points <em>Par-5</em> avg → strategy, wedges, avoid 3-putts.</span>
+                      <span className="block ml-4"> Low <em>Par-3</em> avg → tee-shot precision & short-game focus.</span>
+                      <span className="block ml-4"> Low <em>Par-4</em> avg → driving & approach consistency.</span>
+                      <span className="block ml-4"> Low <em>Par-5</em> avg → strategy (lay-up vs go), wedges, 3-putt avoidance.</span>
                     </li>
                   </ul>
                 </div>
@@ -907,7 +715,7 @@
                           <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
                         </tr>
                       ))}
-                      {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see event ratings.</td></tr>)}
+                      {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import or Load a CSV to see ratings.</td></tr>)}
                     </tbody>
                   </table>
                 </div>
@@ -940,13 +748,10 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Shared Library shows events in Supabase Storage (everyone sees them).</li>
-                  <li>Use <strong>Publish Current Event → Shared</strong> to push your current event there.</li>
-                  <li>Use <strong>Saved Events (This Browser)</strong> to keep up to 16 CSVs locally.</li>
-                  <li>Or import a Squabbit CSV directly in <strong>Event Players</strong>.</li>
+                  <li>Load a shared CSV from <strong>Shared Events (Supabase)</strong> or import one directly.</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
-                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings; hidden from others.</li>
+                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings and Delete buttons.</li>
                 </ol>
               </section>
 
