@@ -72,7 +72,11 @@
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
       // ---------- CSV parsing ----------
-      function splitSmart(raw){ const d=raw.includes('\t')?'\t':','; return raw.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim()); }
+      function splitSmart(raw){
+        // Support comma, tab, or semicolon
+        const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
+        return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
+      }
       function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
 
       function detectBothParsFromLines(lines){
@@ -107,18 +111,23 @@
       }
 
       function readStablefordPerHole(row){
+        // Find the "Stableford" token anywhere on the row
         let start=-1;
-        for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
+        for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
         if(start<0) return null;
+
         const vals=[];
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||'\\'===raw){ vals.push(0); continue; }
+          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
+          // Only accept realistic per-hole Stableford numbers
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
-        return vals.length>=18 ? vals.slice(0,18) : null;
+        // If we didn’t get 18, don’t kill the render — pad with zeros
+        while(vals.length<18) vals.push(0);
+        return vals.slice(0,18);
       }
 
       function parseSquabbitCSV(text){
@@ -153,9 +162,9 @@
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals
+        // Totals table (section after a "Stableford" header)
         let stablefordSectionRow=-1;
-        for(let i=0;i<lines.length;i++){ if((lines[i][0]||'')==='Stableford'){ stablefordSectionRow=i; break; } }
+        for(let i=0;i<lines.length;i++){ if((lines[i][0]||'').trim()==='Stableford'){ stablefordSectionRow=i; break; } }
         const totals={};
         if(stablefordSectionRow>=0){
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
@@ -167,23 +176,20 @@
           }
         }
 
-        // Per-hole
+        // Per-hole from detailed cards
         const holeData={};
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
             if((lines[i][0]||'').trim()===p.name){
               const stRow=lines[i+1]||[];
-              if(!stRow.some(c=>String(c).trim()==='Stableford')) continue;
+              if(!stRow.some(c=>String(c).trim().toLowerCase()==='stableford')) continue;
               const perHole=readStablefordPerHole(stRow);
-              if(perHole){
-                const back9=perHole.slice(9).reduce((a,b)=>a+b,0);
-                holeData[p.name]={perHole, back9};
-                break;
-              }else{
-                holeData[p.name]={perHole:Array(18).fill(0), back9:0};
-              }
+              const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
+              holeData[p.name]={perHole, back9};
+              break;
             }
           }
+          if(!holeData[p.name]) holeData[p.name]={perHole:Array(18).fill(0), back9:0};
         }
 
         return {
@@ -319,13 +325,17 @@
         const effectiveWomen=useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
 
         async function importCSV(file){
-          const text=await file.text();
-          const parsed=parseSquabbitCSV(text);
-          setPlayers(parsed.players||[]);
-          setDetectedMen(parsed.detectedMen||null);
-          setDetectedWomen(parsed.detectedWomen||null);
-          if(parsed.detectedMen){ setUseDetected(true); }
-          if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
+          try{
+            const text=await file.text();
+            const parsed=parseSquabbitCSV(text);
+            setPlayers(parsed.players||[]);
+            setDetectedMen(parsed.detectedMen||null);
+            setDetectedWomen(parsed.detectedWomen||null); // ← fixed
+            if(parsed.detectedMen){ setUseDetected(true); }
+            if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
+          }catch(e){
+            alert("Couldn't read CSV: "+(e?.message||e));
+          }
         }
 
         function importManyToLibrary(fileList){
@@ -341,6 +351,7 @@
               items=addToLibraryItems(items,name,date,csv);
               setLibrary(items);
             };
+            reader.onerror=()=>alert("Couldn't read file: "+(f.name||'file'));
             reader.readAsText(f);
           }
         }
@@ -360,7 +371,8 @@
 
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
+          // Use countback within equal-points groups
+          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
           if(!base.length) return [];
           const groups=[]; const used=new Set();
           for(const r of base){
@@ -369,6 +381,7 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
+          // Decide winners among top group by countback
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -478,23 +491,31 @@
           setLibrary(items);
         }
         function loadLibraryItem(item){
-          const parsed=parseSquabbitCSV(item.csv);
-          if(!parsed.players.length){
-            const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
-            const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
-            const players=[];
-            if(idxHeader>=0){
-              for(let i=idxHeader+1;i<lines.length;i++){
-                const r=lines[i]; if(!r||!r[0]) break;
-                players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
+          try{
+            const parsed=parseSquabbitCSV(item.csv);
+            if(!parsed.players.length){
+              // Fallback to our own export format
+              const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
+              const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
+              const players=[];
+              if(idxHeader>=0){
+                for(let i=idxHeader+1;i<lines.length;i++){
+                  const r=lines[i]; if(!r||!r[0]) break;
+                  players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
+                }
               }
+              setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
+            }else{
+              setPlayers(parsed.players||[]);
+              setDetectedMen(parsed.detectedMen||null);
+              setDetectedWomen(parsed.detectedWomen||null); // ← fixed
+              setUseDetected(true);
             }
-            setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
-          }else{
-            setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen)||null; setUseDetected(true);
+            setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
+            window.scrollTo({top:0,behavior:'smooth'});
+          }catch(e){
+            alert("Couldn't load saved CSV: "+(e?.message||e));
           }
-          setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
-          window.scrollTo({top:0,behavior:'smooth'});
         }
         function promptRename(item){ const nn=prompt("Rename event:", item.name||"Event"); if(nn&&nn.trim()){ setLibrary(renameLibraryItem(library,item.id,nn.trim())); } }
         function removeItem(item){ if(confirm(`Delete "${item.name}" from Library?`)){ setLibrary(deleteLibraryItem(library,item.id)); } }
@@ -564,7 +585,7 @@
                               const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
                               const a=document.createElement('a');
                               a.href=URL.createObjectURL(blob);
-                              a.download = `${(item.name||'Event')}.csv`;   // ← fixed backtick + template string
+                              a.download = `${(item.name||'Event')}.csv`;
                               a.click();
                             }}>Download</button>
                           </td>
