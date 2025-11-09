@@ -71,30 +71,66 @@
       }
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
-      // ---------- CSV parsing core ----------
+      // ---------- Robust CSV parsing ----------
+      function smartDelimiter(line) {
+        if (line.includes('\t')) return '\t';
+        if (line.includes(';')) return ';';
+        return ',';
+      }
+      function splitCSVLine(line) {
+        const d = smartDelimiter(line);
+        if (d !== ',') {
+          return line.split(d).map(s => (s||'').replace(/^\uFEFF/, '').replace(/^"|"$/g,'').trim());
+        }
+        // Proper CSV with quotes/double-quotes
+        const out = [];
+        let cur = '', inQ = false;
+        for (let i=0;i<line.length;i++){
+          const ch = line[i];
+          if (ch === '"'){
+            if (inQ && line[i+1] === '"'){ cur += '"'; i++; }
+            else inQ = !inQ;
+          } else if (ch === ',' && !inQ){
+            out.push(cur.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+            cur = '';
+          } else {
+            cur += ch;
+          }
+        }
+        out.push(cur.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+        return out;
+      }
       function splitSmartRows(text){
-        const rows=text.replace(/\r/g,'').split('\n');
-        return rows.map(line=>{
-          const d=line.includes('\t')?'\t':',';
-          return line.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim());
-        });
+        const rows = text.replace(/\r/g,'').split('\n');
+        return rows.map(splitCSVLine);
       }
       function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
-      function readStablefordPerHole(row){
-        let start=-1;
-        for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
-        if(start<0) return Array(18).fill(0);
-        const vals=[];
-        for(let j=start+1;j<row.length && vals.length<18;j++){
-          const raw=String(row[j]||'').trim();
-          if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
-          const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
-          if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
+
+      // Player header row tolerant to Hdcp/Hcap/HCP/Handicap (case-insensitive)
+      function findPlayerHeaderRow(lines){
+        const isName = v => /^name$/i.test(String(v||'').trim());
+        const isHcap = v => /^(hd?c?p|hcap|hcp|handicap)$/i.test(String(v||'').trim());
+        for (let i=0;i<lines.length;i++){
+          const r = lines[i]||[];
+          for (let c=0;c<Math.max(3,r.length);c++){
+            if (isName(r[c]) && isHcap(r[c+1])) return i;
+          }
         }
-        while(vals.length<18) vals.push(0);
-        return vals.slice(0,18);
+        return -1;
       }
+
+      // Detect "Stableford" section header (case-insensitive)
+      function rowHasStablefordToken(row){
+        return (row||[]).some(x => /^stableford(\s+totals)?$/i.test(String(x||'').trim()));
+      }
+      function findStablefordTotalsStart(lines){
+        for (let i=0;i<lines.length;i++){
+          if (rowHasStablefordToken(lines[i])) return i;
+        }
+        return -1;
+      }
+
+      // Detect Men/Women pars from CSV. If only one set found, use for both.
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
@@ -126,145 +162,94 @@
         return { men: detected||null, women: detected||null };
       }
 
-      // --- 2024 helpers (old format) ---
-      function findOldTotalsHeaderRow(lines){
-        for(let i=0;i<lines.length;i++){
-          const r = lines[i] || [];
-          const c0 = String(r[0]||'').trim().toLowerCase();
-          const c1 = String(r[1]||'').trim().toLowerCase();
-          const c2 = String(r[2]||'').trim().toLowerCase();
-          if (c0==='player' && (c1==='round 1' || c1==='round1') && c2==='total') return i;
+      // Per-hole “Stableford” row (case-insensitive), 0..6 or P / "\" → 0; pad to 18
+      function readStablefordPerHole(row){
+        let start=-1;
+        for(let i=0;i<row.length;i++){ if(/^stableford$/i.test(String(row[i]||'').trim())){ start=i; break; } }
+        if(start<0) return Array(18).fill(0);
+        const vals=[];
+        for(let j=start+1;j<row.length && vals.length<18;j++){
+          const raw=String(row[j]||'').trim();
+          if(raw==='') continue;
+          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
+          const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
+          if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
-        return -1;
-      }
-      function readOldTotals(lines, headerRow){
-        const totals = {};
-        for(let i=headerRow+1;i<lines.length;i++){
-          const r = lines[i] || [];
-          const name = String(r[0]||'').trim();
-          if(!name) break;
-          if (isTeamLike(name)) continue;
-          let total = NaN;
-          for(let k=1;k<r.length;k++){
-            const val = parseFloat(String(r[k]||'').replace(/[^0-9.\-]/g,''));
-            if (Number.isFinite(val)) { total = val; break; }
-          }
-          if (Number.isFinite(total)) totals[name]=total;
-        }
-        return totals;
-      }
-      function extractCardForPlayer(lines, playerName){
-        for (let i=0;i<lines.length-1;i++){
-          const row = lines[i] || [];
-          if (String(row[0]||'').trim() !== playerName) continue;
-          const rowStr = row.join(' ').toLowerCase();
-          const gender = /(red tee|women|ladies)/.test(rowStr) ? 'F' : 'M';
-          let handicap = NaN;
-          for (let k=1;k<row.length;k++){
-            const maybe = parseFloat(String(row[k]||'').replace(/[^0-9.\-]/g,''));
-            if (Number.isFinite(maybe)) { handicap = maybe; break; }
-          }
-          const st = lines[i+1] || [];
-          if (!st.some(c => /^stableford$/i.test(String(c||'').trim()))) continue;
-          const perHole = readStablefordPerHole(st);
-          const back9   = perHole.slice(9).reduce((a,b)=>a+(+b||0),0);
-          return { gender, handicap: Number.isFinite(handicap)?handicap:NaN, perHole, back9 };
-        }
-        return { gender:'M', handicap:NaN, perHole:Array(18).fill(0), back9:0 };
+        while(vals.length<18) vals.push(0);
+        return vals.slice(0,18);
       }
 
-      // --- 2025 helpers (new format) ---
-      function findPlayerHeaderRow(lines){
-        const isName = v => /^name$/i.test(String(v||'').trim());
-        const isHcap = v => /^(hd?c?p|hcap|hcp|handicap)$/i.test(String(v||'').trim());
-        for (let i=0;i<lines.length;i++){
-          const r = lines[i]||[];
-          for (let c=0;c<Math.max(3,r.length);c++){
-            if (isName(r[c]) && isHcap(r[c+1])) return i;
-          }
-        }
-        return -1;
-      }
-      function findStablefordTotalsStart(lines){
-        for (let i=0;i<lines.length;i++){
-          if ((lines[i]||[]).some(x => /^stableford(\s+totals)?$/i.test(String(x||'').trim()))) return i;
-        }
-        return -1;
-      }
-
-      // --- Unified parser (handles 2024 + 2025) ---
       function parseSquabbitCSV(text){
         const lines = splitSmartRows(text);
-        const detectedBoth = detectBothParsFromLines(lines);
 
-        const newHdr = findPlayerHeaderRow(lines);
-        let players = [];
-        let totals  = {};
+        const detectedBoth=detectBothParsFromLines(lines);
 
-        if (newHdr >= 0){
-          // 2025-style players
-          for(let i=newHdr+1;i<lines.length;i++){
+        // Players
+        const playerHeaderRow = findPlayerHeaderRow(lines);
+        const players=[];
+        if(playerHeaderRow>=0){
+          for(let i=playerHeaderRow+1;i<lines.length;i++){
             const name=(lines[i][0]||'').trim();
             if(!name) break;
             if(isTeamLike(name)) continue;
             const hcap=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(hcap)) players.push({name, handicap:hcap, gender:'M'});
-          }
-          // optional totals block
-          const stStart = findStablefordTotalsStart(lines);
-          if (stStart >= 0){
-            for(let i=stStart+2;i<lines.length;i++){
-              const nm=(lines[i][0]||'').trim();
-              if(!nm) break;
-              if(isTeamLike(nm)) continue;
-              let val = NaN;
-              for(let k=1;k<lines[i].length;k++){
-                const maybe = parseFloat(String(lines[i][k]||'').replace(/[^0-9.\-]/g,''));
-                if(Number.isFinite(maybe)){ val=maybe; break; }
-              }
-              if(Number.isFinite(val)) totals[nm]=val;
-            }
-          }
-        } else {
-          // 2024-style totals header
-          const oldHdr = findOldTotalsHeaderRow(lines);
-          if (oldHdr >= 0){
-            totals = readOldTotals(lines, oldHdr);
-            players = Object.keys(totals).map(n => ({ name:n, handicap:NaN, gender:'M' }));
+            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
           }
         }
 
-        // Per-hole/back9 & gender/handicap sniff from detailed cards (works for both)
-        const holeData = {};
-        const genderMap = {};
-        const handicapMap = {};
-        for (const p of players){
-          const card = extractCardForPlayer(lines, p.name);
-          holeData[p.name] = { perHole: card.perHole, back9: card.back9 };
-          if (card.gender) genderMap[p.name] = card.gender;
-          if (Number.isFinite(card.handicap)) handicapMap[p.name] = card.handicap;
-        }
-        // extra gender pass based on tee text anywhere
-        for (let i=0;i<lines.length;i++){
-          const nm=(lines[i][0]||'').trim(); if(!nm) continue;
-          const tee=String(lines[i][1]||'').toLowerCase();
-          if (/(red tee|women|ladies)/.test(tee)) genderMap[nm]='F';
+        // Gender hints
+        const genderMap={};
+        for(const row of lines){
+          const nm=(row[0]||'').trim(); if(!nm) continue;
+          const tee=String(row[1]||'').toLowerCase();
+          if (/(women|ladies|women's|ladies'|womens)/.test(tee)) genderMap[nm]='F';
           else if (genderMap[nm]==null) genderMap[nm]='M';
         }
+        for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        const outPlayers = players.map(p => ({
-          name: p.name,
-          gender: genderMap[p.name] || p.gender || 'M',
-          handicap: Number.isFinite(handicapMap[p.name]) ? handicapMap[p.name] : p.handicap,
-          points: totals[p.name] || 0,
-          back9: holeData[p.name]?.back9 || 0,
-          perHole: holeData[p.name]?.perHole || []
-        }));
+        // Totals (first numeric after name)
+        const stablefordSectionRow = findStablefordTotalsStart(lines);
+        const totals={};
+        if(stablefordSectionRow>=0){
+          for(let i=stablefordSectionRow+2;i<lines.length;i++){
+            const nm=(lines[i][0]||'').trim();
+            if(!nm) break;
+            if(isTeamLike(nm)) continue;
+            let val = NaN;
+            for(let k=1;k<lines[i].length;k++){
+              const maybe = parseFloat(String(lines[i][k]||'').replace(/[^0-9.\-]/g,''));
+              if(Number.isFinite(maybe)){ val=maybe; break; }
+            }
+            if(Number.isFinite(val)) totals[nm]=val;
+          }
+        }
+
+        // Per-hole rows next to each player
+        const holeData={};
+        for(const p of players){
+          for(let i=0;i<lines.length-1;i++){
+            if((lines[i][0]||'').trim()===p.name){
+              const stRow=lines[i+1]||[];
+              if(!stRow.some(c=>/^stableford$/i.test(String(c||'').trim()))) continue;
+              const perHole=readStablefordPerHole(stRow);
+              const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
+              holeData[p.name]={perHole, back9};
+              break;
+            }
+          }
+        }
 
         return {
           detectedMen: detectedBoth.men,
           detectedWomen: detectedBoth.women,
-          players: outPlayers
+          players: players.map(p=>({
+            name:p.name,
+            gender:p.gender,
+            handicap:p.handicap,
+            points: totals[p.name]||0,
+            back9: holeData[p.name]?.back9||0,
+            perHole: holeData[p.name]?.perHole||[]
+          }))
         };
       }
 
@@ -323,7 +308,7 @@
         useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
         useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
 
-        // Supabase defaults (owner-only UI; hidden for others)
+        // Supabase defaults
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
@@ -413,12 +398,12 @@
 
         function resetSeasonLocal(){ setSeason({}); }
 
-        // Computed (with countback winner)
+        // Computed with countback winner
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
-          // group ties by total points
+          // tie groups by points
           const groups=[]; const used=new Set();
           for(const r of base){
             if(used.has(r.idx)) continue;
@@ -426,7 +411,7 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          // decide winner(s) of top tie by countback
+          // countback only for the top group to decide winner bonus
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -544,7 +529,7 @@
             if(idxHeader>=0){
               for(let i=idxHeader+1;i<lines.length;i++){
                 const r=lines[i]; if(!r||!r[0]) break;
-                players.push({name:r[0],gender:r[1]||'M',handicap(Number(r[2])||0),points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
+                players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
               }
             }
             setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
@@ -589,7 +574,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Saved Events (Library)</h2>
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
                     <label className="btn btn-outline cursor-pointer">Import to Library
                       <input type="file" accept=".csv" multiple className="hidden" onChange={e=>{ if(e.target.files?.length){ importManyToLibrary(e.target.files); e.target.value=''; } }} />
                     </label>
@@ -702,7 +687,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
-                <div className="flex gap-2">
+                  <div className="flex gap-2">
                     <button onClick={()=>{
                       const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
                       const rows=[header,
@@ -747,21 +732,29 @@
                     }}>Export Ratings</button>
                 </div>
 
-                {/* Quick explainer */}
-                <div className="rounded-xl border border-neutral-200 p-3 mb-3 text-sm text-neutral-700">
-                  <div className="font-medium mb-1">How ratings work</div>
-                  <ul className="list-disc pl-5">
-                    <li>Stableford baseline: <strong>2 points = net par</strong>, 3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse.</li>
-                    <li>We average your Stableford points on the holes whose par is 3, 4, and 5.</li>
-                    <li>Badges: <span class="px-1 rounded bg-emerald-100 text-emerald-800">Excellent</span> ≥ 3.0; <span class="px-1 rounded bg-emerald-50 text-emerald-700">Good</span> ≥ 2.5; <span class="px-1 rounded bg-neutral-100">Solid</span> ≥ 2.0; <span class="px-1 rounded bg-amber-100 text-amber-800">Needs work</span> ≥ 1.5; <span class="px-1 rounded bg-red-100 text-red-800">Struggle</span> &lt; 1.5.</li>
+                {/* Ratings explanation / legend */}
+                <div className="mb-4 rounded-xl border p-3 bg-neutral-50 text-sm">
+                  <div className="font-medium mb-1">How to read this:</div>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li><span className="mono">Stableford</span> guide: <span className="chip mono">2 pts</span> = net par, <span className="chip mono">3 pts</span> = net birdie, <span className="chip mono">4 pts</span> = net eagle.</li>
+                    <li>Badge meaning:
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-lg text-xs font-medium bg-red-100 text-red-800">Struggle &lt; 1.5</span>
+                    </li>
+                    <li><span className="font-medium">Why it helps:</span> quick read on where strokes are leaking:
+                      <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                        <div>Low <strong>Par-3</strong> avg → tee-shot precision / short-game focus.</div>
+                        <div>Low <strong>Par-4</strong> avg → driving / approach consistency.</div>
+                        <div>Low <strong>Par-5</strong> avg → strategy (lay-up vs go), wedge play, or 3-putt avoidance.</div>
+                      </div>
+                    </li>
                   </ul>
-                  <div className="mt-2 text-xs text-neutral-600">
-                    Why it helps: quick signal where strokes are leaking.<br/>
-                    Low Par-3 avg → tee-shot precision/short-game. Low Par-4 avg → driving/approach consistency. Low Par-5 avg → strategy, wedge play, or 3-putt avoidance.
-                  </div>
                 </div>
 
-                {/* Pars in use */}
+                {/* Pars used */}
                 <div className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                   <div className="mono text-sm overflow-auto">
@@ -770,6 +763,7 @@
                   </div>
                 </div>
 
+                {/* Ratings table */}
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -833,6 +827,26 @@
                 </ol>
               </section>
 
+              {/* Settings (Owner only) */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
+                <h2 className="text-lg font-semibold mb-2">Settings</h2>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm block mb-1">Supabase URL</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
+                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={saveSupa} className="btn btn-emerald">Save & Connect</button>
+                  <button onClick={()=>client && fetchSeasonWith(client)} className="btn btn-outline">Reload Season</button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Toggle Owner Mode with Ctrl+Alt+O.</p>
+              </section>
+
             </div>
           </div>
         );
@@ -843,4 +857,3 @@
     </script>
   </body>
 </html>
-
