@@ -19,7 +19,7 @@
       .btn-primary{background:#111;color:#fff}
       .btn-indigo{background:#4f46e5;color:#fff}
       .btn-emerald{background:#059669;color:#fff}
-      .btn-outline{border:1px solid #d4d4d4}
+      .btn-outline{border:1px solid #d4d4d4;background:#fff}
       .btn-danger{border:1px solid #fecaca;color:#b91c1c;background:#fff}
     </style>
   </head>
@@ -38,25 +38,8 @@
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
       const to1 = x => Math.round((Number(x)||0)*10)/10;
       const prettyBytes = n => n>=1024*1024 ? (n/1048576).toFixed(1)+' MB' : n>=1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
-
-      // Pretty date for the event chip
-      const prettyDate = (iso) => {
-        try {
-          const d = new Date(iso);
-          return d.toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
-        } catch { return iso || ''; }
-      };
-
-      // Split full name -> First/Last for Squabbit
-      function splitFirstLast(fullName){
-        const raw=(fullName||'').trim().replace(/\s+/g,' ');
-        if(!raw) return {first:'', last:''};
-        const parts=raw.split(' ');
-        if(parts.length===1) return {first:parts[0], last:''};
-        const last=parts.pop();
-        const first=parts.join(' ');
-        return {first,last};
-      }
+      const prettyDate = (iso) => { try { const d=new Date(iso); return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});} catch { return iso||''; } };
+      function splitFirstLast(fullName){ const raw=(fullName||'').trim().replace(/\s+/g,' '); if(!raw) return {first:'',last:''}; const parts=raw.split(' '); if(parts.length===1) return {first:parts[0],last:''}; const last=parts.pop(); return {first:parts.join(' '), last}; }
 
       // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
@@ -75,147 +58,102 @@
       }
 
       // ---------- Name filters ----------
-      const isTeamLike = name =>
-        /^(team(\s*\d+)?)$/i.test(name||'') ||
-        /^team average$/i.test(name||'') ||
-        /^stableford$/i.test(name||'');
+      const isTeamLike = name => /^(team(\s*\d+)?)$/i.test(name||'') || /^team average$/i.test(name||'') || /^stableford$/i.test(name||'');
 
       // ---------- Supabase helpers ----------
-      function normalizeUrl(u){
-        if(!u) return '';
-        let s = String(u).trim().replace(/\/+$/,'');
-        if(!/^https?:\/\//i.test(s)) s = 'https://' + s;
-        try{ const url = new URL(s); return `https://${url.host}`; }catch{ return ''; }
-      }
+      function normalizeUrl(u){ if(!u) return ''; let s=String(u).trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='https://'+s; try{ const url=new URL(s); return `https://${url.host}`; }catch{ return ''; } }
       function cleanKey(k){ return (k||'').replace(/[^\x20-\x7E]/g,'').trim(); }
       function makeSupabaseClient(url, key){
-        const u = normalizeUrl(url), k = cleanKey(key);
-        if(!u || !k) return null;
+        const u=normalizeUrl(url), k=cleanKey(key);
+        if(!u||!k) return null;
         if(!(window.supabase && window.supabase.createClient)) throw new Error('supabase-js SDK did not load');
         return window.supabase.createClient(u, k, { auth:{ persistSession:false }});
       }
-      async function probe(client){
-        try{
-          const { error, status } = await client.from('season_standings').select('name').limit(1);
-          if(error) return { ok:false, status, msg:error.message };
-          return { ok:true, status:200, msg:'Connected' };
-        }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
-      }
+      async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
       // ---------- CSV parsing ----------
-      function splitSmart(raw){
-        const d = raw.includes('\t')? '\t' : ',';
-        return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
-      }
-      function toNum(x){
-        const v = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, ''));
-        return Number.isFinite(v) ? v : NaN;
-      }
+      function splitSmart(raw){ const d=raw.includes('\t')?'\t':','; return raw.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim()); }
+      function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
 
-      // Detect Men/Women pars from CSV. If only one set found, use for both.
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
           for(let i=0;i<row.length;i++){
             const s=String(row[i]||'').trim();
             if(/^(par|pars|out|in|total)$/i.test(s)) continue;
-            const r = Math.round(toNum(s));
-            if(r===3||r===4||r===5){
-              pars.push(r);
-              if(pars.length===18) break;
-            }
+            const r=Math.round(toNum(s));
+            if(r===3||r===4||r===5){ pars.push(r); if(pars.length===18) break; }
           }
-          return pars.length===18 ? pars : null;
+          return pars.length===18?pars:null;
         }
-        const parRows = lines.filter(function(r){
-          for(let i=0;i<r.length;i++){ if(/^pars?$/i.test(String(r[i]).trim())) return true; }
-          return false;
-        });
-
+        const parRows = lines.filter(r => r.some(c => /^pars?$/i.test(String(c).trim())));
         let detected = null;
-        for(let i=0;i<parRows.length;i++){
-          const cand = scanParRow(parRows[i]);
-          if(cand){ detected=cand; break; }
-        }
-
+        for(const row of parRows){ const cand=scanParRow(row); if(cand){ detected=cand; break; } }
         if(!detected && parRows.length>=2){
           const nines=[];
-          for(let k=0;k<parRows.length;k++){
-            const nums = parRows[k].map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
+          for(const row of parRows){
+            const nums=row.map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
             if(nums.length>=9) nines.push(nums.slice(0,9));
           }
-          if(nines.length>=2) detected=[].concat(nines[0], nines[1]).slice(0,18);
+          if(nines.length>=2) detected=[...nines[0], ...nines[1]].slice(0,18);
         }
-
         if(!detected){
-          for(let r=0;r<lines.length;r++){
-            const nums = lines[r].map(toNum).map(n=>Math.round(n)).filter(v=>v===3||v===4||v===5);
-            if(nums.length>=18){ detected = nums.slice(0,18); break; }
+          for(const row of lines){
+            const nums=row.map(toNum).map(n=>Math.round(n)).filter(v=>v===3||v===4||v===5);
+            if(nums.length>=18){ detected=nums.slice(0,18); break; }
           }
         }
-
         return { men: detected||null, women: detected||null };
       }
 
-      // STRICT Stableford per-hole reader
-      function readStablefordPerHole(row) {
-        var start = -1;
+      function readStablefordPerHole(row){
+        let start=-1;
         for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
-        if (start < 0) return null;
-
-        const vals = [];
-        for (let j = start + 1; j < row.length && vals.length < 18; j++) {
-          const raw = String(row[j] || '').trim();
-          if (raw === '' ) continue;
-          if (raw === 'P' || raw === 'p' || raw === '\\') { vals.push(0); continue; }
-          const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
-          if (Number.isFinite(n) && n >= 0 && n <= 6) { vals.push(n); }
+        if(start<0) return null;
+        const vals=[];
+        for(let j=start+1;j<row.length && vals.length<18;j++){
+          const raw=String(row[j]||'').trim();
+          if(raw==='') continue;
+          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
+          const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
+          if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
-        if (vals.length >= 18) return vals.slice(0, 18);
-        return null;
+        return vals.length>=18 ? vals.slice(0,18) : null;
       }
 
       function parseSquabbitCSV(text){
-        const rows = text.replace(/\r/g,'').split('\n');
-        const lines = rows.map(splitSmart);
+        const rows=text.replace(/\r/g,'').split('\n');
+        const lines=rows.map(splitSmart);
 
-        // Detect pars
-        const detectedBoth = detectBothParsFromLines(lines);
+        const detectedBoth=detectBothParsFromLines(lines);
 
-        // 1) Players
-        const playerHeaderRow = (function(){
-          for(let i=0;i<lines.length;i++){
-            if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp') return i;
-          }
-          return -1;
-        })();
-
+        // Players
+        let playerHeaderRow=-1;
+        for(let i=0;i<lines.length;i++){
+          if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
+        }
         const players=[];
         if(playerHeaderRow>=0){
           for(let i=playerHeaderRow+1;i<lines.length;i++){
             const name=(lines[i][0]||'').trim();
             if(!name) break;
-            if (isTeamLike(name)) continue;
+            if(isTeamLike(name)) continue;
             const hcap=parseFloat((lines[i][1]||'').trim());
             if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
           }
         }
 
-        // 1b) Gender from detailed rows (2nd cell like "55 Women's tee")
+        // Gender
         const genderMap={};
-        for(let i=0;i<lines.length;i++){
-          const nm=(lines[i][0]||'').trim();
-          if(!nm) continue;
-          const tee=String(lines[i][1]||'').toLowerCase();
+        for(const row of lines){
+          const nm=(row[0]||'').trim(); if(!nm) continue;
+          const tee=String(row[1]||'').toLowerCase();
           if(/women|ladies/.test(tee)) genderMap[nm]='F';
           else if(genderMap[nm]==null) genderMap[nm]='M';
         }
-        for(let i=0;i<players.length;i++){
-          const nm=players[i].name;
-          if(genderMap[nm]) players[i].gender=genderMap[nm];
-        }
+        for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // 2) Stableford totals table
+        // Totals
         let stablefordSectionRow=-1;
         for(let i=0;i<lines.length;i++){ if((lines[i][0]||'')==='Stableford'){ stablefordSectionRow=i; break; } }
         const totals={};
@@ -223,35 +161,27 @@
           for(let i=stablefordSectionRow+2;i<lines.length;i++){
             const nm=(lines[i][0]||'').trim();
             if(!nm) break;
-            if (isTeamLike(nm)) continue;
+            if(isTeamLike(nm)) continue;
             const r1=parseFloat((lines[i][1]||'').trim());
             if(!Number.isNaN(r1)) totals[nm]=r1;
           }
         }
 
-        // 3) Per-hole Stableford from detailed card
+        // Per-hole
         const holeData={};
-        for(let pIdx=0;pIdx<players.length;pIdx++){
-          const p=players[pIdx];
+        for(const p of players){
           for(let i=0;i<lines.length-1;i++){
-            const isPlayerRow = (lines[i][0]||'').trim()===p.name;
-            let nextHasStableford=false;
-            if(Array.isArray(lines[i+1])){
-              if(String(lines[i+1][1]||'').trim()==='Stableford') nextHasStableford=true;
-              else{
-                for(let k=0;k<lines[i+1].length;k++){ if(String(lines[i+1][k]).trim()==='Stableford'){ nextHasStableford=true; break; } }
-              }
-            }
-            if(isPlayerRow && nextHasStableford){
-              const st = lines[i+1] || [];
-              const perHole = readStablefordPerHole(st);
+            if((lines[i][0]||'').trim()===p.name){
+              const stRow=lines[i+1]||[];
+              if(!stRow.some(c=>String(c).trim()==='Stableford')) continue;
+              const perHole=readStablefordPerHole(stRow);
               if(perHole){
-                const back9 = perHole.slice(9).reduce((a,b)=>a+b,0);
-                holeData[p.name]={perHole,back9};
+                const back9=perHole.slice(9).reduce((a,b)=>a+b,0);
+                holeData[p.name]={perHole, back9};
+                break;
               }else{
                 holeData[p.name]={perHole:Array(18).fill(0), back9:0};
               }
-              break;
             }
           }
         }
@@ -263,14 +193,14 @@
             name:p.name,
             gender:p.gender,
             handicap:p.handicap,
-            points: (totals[p.name]||0),
-            back9: holeData[p.name] ? holeData[p.name].back9 : 0,
-            perHole: holeData[p.name] ? holeData[p.name].perHole : []
+            points: totals[p.name]||0,
+            back9: holeData[p.name]?.back9||0,
+            perHole: holeData[p.name]?.perHole||[]
           }))
         };
       }
 
-      // ---------- Ratings helpers ----------
+      // ---------- Ratings ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const badgeClass = avg =>
         avg>=3   ? 'bg-emerald-100 text-emerald-800' :
@@ -279,130 +209,91 @@
         avg>=1.5 ? 'bg-amber-100  text-amber-800' :
                    'bg-red-100    text-red-800';
 
-      const defaultMen = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-      const defaultWomen = [4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
+      const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+      const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
 
       function eventParAverages(perHole, pars){
-        let sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
-        for(let i=0;i<Math.min(18, perHole.length); i++){
-          const pts = Number(perHole[i])||0;
-          const par = Number(pars[i])||4;
-          if(sums[par]){sums[par].s+=pts; sums[par].c++;}
+        const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
+        for(let i=0;i<Math.min(18,perHole.length);i++){
+          const pts=Number(perHole[i])||0;
+          const par=Number(pars[i])||4;
+          if(sums[par]){ sums[par].s+=pts; sums[par].c++; }
         }
         const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
         return {p3:avg(3),p4:avg(4),p5:avg(5)};
       }
 
-      // ---------- Countback helpers ----------
-      function compareByCountback(a, b) {
-        const pa = (a.perHole||[]).slice(0,18);
-        const pb = (b.perHole||[]).slice(0,18);
-        const sum = (arr, s, e) => arr.slice(s, e).reduce((x,y)=>x+(Number(y)||0), 0);
-
-        // Back 9 (10–18)
-        const aB9 = sum(pa, 9, 18), bB9 = sum(pb, 9, 18);
-        if (aB9 !== bB9) return bB9 - aB9;
-
-        // Last 6 (13–18)
-        const aL6 = sum(pa, 12, 18), bL6 = sum(pb, 12, 18);
-        if (aL6 !== bL6) return bL6 - aL6;
-
-        // Last 3 (16–18)
-        const aL3 = sum(pa, 15, 18), bL3 = sum(pb, 15, 18);
-        if (aL3 !== bL3) return bL3 - aL3;
-
-        // Hole-by-hole from 18 back to 1
-        for (let i = 17; i >= 0; i--) {
-          const ai = Number(pa[i])||0, bi = Number(pb[i])||0;
-          if (ai !== bi) return bi - ai; // higher Stableford wins
-        }
-        return 0; // completely tied
+      // ---------- Countback ----------
+      function compareByCountback(a, b){
+        const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
+        const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
+        const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
+        const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
+        const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
+        for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
+        return 0;
       }
 
-      // ---------- Library (saved CSVs in localStorage) ----------
-      const LIB_KEY = 'den_saved_events_v1';
-      const MAX_SAVED = 16;
-
-      function loadLibrary(){
-        try{
-          const raw = localStorage.getItem(LIB_KEY);
-          const arr = raw ? JSON.parse(raw) : [];
-          if(!Array.isArray(arr)) return [];
-          return arr;
-        }catch{ return []; }
-      }
-      function saveLibrary(items){
-        try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0, MAX_SAVED))); }catch{}
-      }
+      // ---------- Library (localStorage) ----------
+      const LIB_KEY='den_saved_events_v1';
+      const MAX_SAVED=16;
+      function loadLibrary(){ try{ const raw=localStorage.getItem(LIB_KEY); const arr=raw?JSON.parse(raw):[]; return Array.isArray(arr)?arr:[]; }catch{ return []; } }
+      function saveLibrary(items){ try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0,MAX_SAVED))); }catch{} }
       function addToLibraryItems(items, name, date, csv){
-        const id = Date.now()+'_'+Math.random().toString(36).slice(2,8);
-        const size = new Blob([csv]).size;
-        const rec = { id, name: name||'Event', date: date||new Date().toISOString().slice(0,10), csv, size, savedAt: new Date().toISOString() };
-        const next = [rec, ...items].slice(0, MAX_SAVED);
-        saveLibrary(next);
-        return next;
+        const id=Date.now()+'_'+Math.random().toString(36).slice(2,8);
+        const size=new Blob([csv]).size;
+        const rec={id,name:name||'Event',date:date||new Date().toISOString().slice(0,10),csv,size,savedAt:new Date().toISOString()};
+        const next=[rec,...items].slice(0,MAX_SAVED); saveLibrary(next); return next;
       }
-      function renameLibraryItem(items, id, newName){
-        const next = items.map(it => it.id===id ? {...it, name:newName} : it);
-        saveLibrary(next); return next;
-      }
-      function deleteLibraryItem(items, id){
-        const next = items.filter(it => it.id!==id);
-        saveLibrary(next); return next;
-      }
+      function renameLibraryItem(items,id,newName){ const next=items.map(it=>it.id===id?{...it,name:newName}:it); saveLibrary(next); return next; }
+      function deleteLibraryItem(items,id){ const next=items.filter(it=>it.id!==id); saveLibrary(next); return next; }
 
       // ---------- App ----------
       function App(){
-        // Owner Mode (toggle with Ctrl+Alt+O)
+        // Owner Mode
         const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
-        useEffect(()=>{ if(ownerMode) document.documentElement.classList.add('owner-on'); else document.documentElement.classList.remove('owner-on'); },[ownerMode]);
-        useEffect(()=>{
-          const onKey=(e)=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const next=!ownerMode; setOwnerMode(next); if(next) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } };
-          window.addEventListener('keydown', onKey);
-          return ()=>window.removeEventListener('keydown', onKey);
-        },[ownerMode]);
+        useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
+        useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
 
         // Supabase defaults
-        const defaultURL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
-
+        const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
+        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
         const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        // Connect on boot
         useEffect(()=>{
           let cancelled=false;
           async function boot(){
             try{
-              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot, 600); return; }
-              const u = normalizeUrl(localStorage.getItem('supa_url')||defaultURL);
-              const k = cleanKey(localStorage.getItem('supa_key')||defaultKEY);
-              const c = makeSupabaseClient(u,k);
+              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,600); return; }
+              const u=normalizeUrl(localStorage.getItem('supa_url')||defaultURL);
+              const k=cleanKey(localStorage.getItem('supa_key')||defaultKEY);
+              const c=makeSupabaseClient(u,k);
               if(!c){ setStatusMsg('Invalid URL or key'); return; }
               if(cancelled) return;
               setClient(c);
-              const res = await probe(c);
+              const res=await probe(c);
               if(cancelled) return;
               setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
               if(res.ok) await fetchSeasonWith(c);
             }catch(e){ if(!cancelled) setStatusMsg(`Error: ${String(e?.message||e)}`); }
           }
           boot();
-          return ()=>{ cancelled=true; };
+          return()=>{cancelled=true;};
         },[]);
 
         async function saveSupa(){
-          const u = normalizeUrl((supaURL||defaultURL));
-          const k = cleanKey((supaKEY||defaultKEY));
-          localStorage.setItem('supa_url', u);
-          localStorage.setItem('supa_key', k);
+          const u=normalizeUrl((supaURL||defaultURL));
+          const k=cleanKey((supaKEY||defaultKEY));
+          localStorage.setItem('supa_url',u);
+          localStorage.setItem('supa_key',k);
           setStatusMsg('Checking connection…');
           try{
-            const c = makeSupabaseClient(u,k);
+            const c=makeSupabaseClient(u,k);
             setClient(c);
-            const res = await probe(c);
+            const res=await probe(c);
             setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
             if(res.ok) await fetchSeasonWith(c);
           }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
@@ -414,55 +305,40 @@
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
 
-        // Pars state (Men & Women)
+        // Pars state
+        const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+        const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
         const [detectedMen,setDetectedMen]=useState(null);
         const [detectedWomen,setDetectedWomen]=useState(null);
         const [useDetected,setUseDetected]=useState(true);
-
         const [parsMenStr,setParsMenStr]=useState(localStorage.getItem('den_pars_men')||defaultMen.join(','));
         const [parsWomenStr,setParsWomenStr]=useState(localStorage.getItem('den_pars_women')||defaultWomen.join(','));
-
-        const manualMen = useMemo(()=>{
-          try{
-            const arr = parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
-            return arr.length===18 ? arr : defaultMen;
-          }catch{ return defaultMen; }
-        },[parsMenStr]);
-        const manualWomen = useMemo(()=>{
-          try{
-            const arr = parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>Number.isFinite(n));
-            return arr.length===18 ? arr : defaultWomen;
-          }catch{ return defaultWomen; }
-        },[parsWomenStr]);
-
-        const effectiveMen   = useMemo(()=> (useDetected && Array.isArray(detectedMen) && detectedMen.length===18) ? detectedMen : manualMen, [useDetected, detectedMen, manualMen]);
-        const effectiveWomen = useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
+        const manualMen=useMemo(()=>{ try{ const arr=parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultMen; }catch{ return defaultMen; }},[parsMenStr]);
+        const manualWomen=useMemo(()=>{ try{ const arr=parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultWomen; }catch{ return defaultWomen; }},[parsWomenStr]);
+        const effectiveMen=useMemo(()=> (useDetected && Array.isArray(detectedMen) && detectedMen.length===18) ? detectedMen : manualMen, [useDetected, detectedMen, manualMen]);
+        const effectiveWomen=useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
 
         async function importCSV(file){
           const text=await file.text();
-          const parsed = parseSquabbitCSV(text);
+          const parsed=parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setDetectedMen(parsed.detectedMen||null);
           setDetectedWomen(parsed.detectedWomen||null);
           if(parsed.detectedMen){ setUseDetected(true); }
-          // try infer event name/date from filename
-          if(file && file.name){
-            const base = file.name.replace(/\.[^.]+$/,'');
-            if(base) setEventName(base);
-          }
+          if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
         }
 
         function importManyToLibrary(fileList){
-          const arr = Array.from(fileList||[]);
+          const arr=Array.from(fileList||[]);
           if(!arr.length) return;
-          let items = loadLibrary();
+          let items=loadLibrary();
           for(const f of arr){
-            const reader = new FileReader();
-            reader.onload = (e)=>{
-              const csv = String(e.target.result||'');
-              const name = (f.name||'Event').replace(/\.[^.]+$/,'');
-              const date = new Date().toISOString().slice(0,10);
-              items = addToLibraryItems(items, name, date, csv);
+            const reader=new FileReader();
+            reader.onload=e=>{
+              const csv=String(e.target.result||'');
+              const name=(f.name||'Event').replace(/\.[^.]+$/,'');
+              const date=new Date().toISOString().slice(0,10);
+              items=addToLibraryItems(items,name,date,csv);
               setLibrary(items);
             };
             reader.readAsText(f);
@@ -471,43 +347,42 @@
 
         function resetSeasonLocal(){ setSeason({}); }
 
-        // ---------- Computed event results with full COUNTBACK ----------
-        const computed = useMemo(()=>{
-          const rows=players.map((p,i)=>({
-            idx:i,name:p.name,gender:p.gender,
-            startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole
-          }));
+        // Computed (with countback winner)
+        function compareByCountback(a,b){
+          const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
+          const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
+          const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
+          const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
+          const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
+          for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
+          return 0;
+        }
+
+        const computed=useMemo(()=>{
+          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
-
-          // Group by TOTAL points only
           const groups=[]; const used=new Set();
-          for(let i=0;i<base.length;i++){
-            if(used.has(base[i].idx)) continue;
-            const grpIdxs = base.filter(r=>r.points===base[i].points).map(r=>r.idx);
+          for(const r of base){
+            if(used.has(r.idx)) continue;
+            const grpIdxs=base.filter(x=>x.points===r.points).map(x=>x.idx);
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-
-          // Determine winner(s) by countback in the top group
-          const topGroupIdxs = groups[0];
-          const topGroup = topGroupIdxs.map(i => rows.find(r=>r.idx===i));
-          let best = [ topGroup[0] ];
-          for (let k=1;k<topGroup.length;k++){
-            const cmp = compareByCountback(topGroup[k], best[0]);
-            if (cmp > 0) { best = [ topGroup[k] ]; }
-            else if (cmp === 0) { best.push(topGroup[k]); }
+          const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
+          let best=[topGroup[0]];
+          for(let k=1;k<topGroup.length;k++){
+            const cmp=compareByCountback(topGroup[k],best[0]);
+            if(cmp>0) best=[topGroup[k]];
+            else if(cmp===0) best.push(topGroup[k]);
           }
-          const winnerIdxSet = new Set(best.map(r=>r.idx)); // joint winners allowed
-
-          // Assign positions + league points + compute next handicaps
+          const winnerIdxSet=new Set(best.map(r=>r.idx));
           let pos=1; const out=[];
           for(const g of groups){
-            const start=pos;
-            const ptsValue=POINTS_TABLE[start-1]||0;
+            const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
             for(const i of g){
               const r=rows.find(x=>x.idx===i);
-              const isWinner = winnerIdxSet.has(i) && (g===groups[0]);
+              const isWinner=winnerIdxSet.has(i) && (g===groups[0]);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
               out.push({...r,position:start,leaguePoints:ptsValue,isWinner,...res});
             }
@@ -516,26 +391,15 @@
           return out.sort((a,b)=>a.position-b.position);
         },[players]);
 
-        // Supabase fetch & upsert
+        // Supabase I/O
         async function fetchSeasonWith(c){
-          const { data, error } = await c.from('season_standings')
-            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+          const {data,error}=await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
           if(error){ setStatusMsg(`Error: ${error.message}`); return; }
           const map={};
           (data||[]).forEach(r=>{
             if(isTeamLike(r.name)) return;
-            const bph = Array.isArray(r.best_per_hole)
-              ? r.best_per_hole
-              : (typeof r.best_per_hole==='string' ? (JSON.parse(r.best_per_hole||'[]')||[]) : []);
-            map[r.name]={
-              name:r.name,
-              totalPoints:r.total_points||0,
-              events:r.events||0,
-              bestEventPoints:r.best_event_points??0,
-              bestHolePoints:r.best_hole_points??0,
-              eclecticTotal:r.eclectic_total??0,
-              bestPerHole:(bph||[]).map(n=>Number(n)||0)
-            };
+            const bph=Array.isArray(r.best_per_hole)?r.best_per_hole:(typeof r.best_per_hole==='string'?(JSON.parse(r.best_per_hole||'[]')||[]):[]);
+            map[r.name]={ name:r.name, totalPoints:r.total_points||0, events:r.events||0, bestEventPoints:r.best_event_points??0, bestHolePoints:r.best_hole_points??0, eclecticTotal:r.eclectic_total??0, bestPerHole:(bph||[]).map(n=>Number(n)||0) };
           });
           setSeason(map);
         }
@@ -545,187 +409,100 @@
           for(const r of computed){
             if(isTeamLike(r.name)) continue;
             const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
-            const eventPerHole = (r.perHole||[]).map(v=>Math.max(0, Math.min(6, Number(v)||0)));
-            const bestPerHole = Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0, eventPerHole[i]||0));
-            const eclecticTotal = bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
-            const nextBestEvent = Math.max(prev.bestEventPoints||0, r.points||0);
-            const nextBestHole  = Math.max(prev.bestHolePoints || 0, Math.max(0,...eventPerHole));
-
-            next[r.name] = {
-              name:r.name,
-              totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0),
-              events:(prev.events||0)+1,
-              bestEventPoints:nextBestEvent,
-              bestHolePoints:nextBestHole,
-              eclecticTotal,
-              bestPerHole
-            };
+            const eventPerHole=(r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0)));
+            const bestPerHole=Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0,eventPerHole[i]||0));
+            const eclecticTotal=bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
+            const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
+            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max(0,...eventPerHole));
+            next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, eclecticTotal, bestPerHole };
           }
           setSeason(next);
-
           if(client){
-            const rows=Object.values(next)
-              .filter(r=>!isTeamLike(r.name))
-              .map(r=>({
-                name:r.name,
-                total_points:r.totalPoints|0,
-                events:r.events|0,
-                best_event_points:r.bestEventPoints|0,
-                best_hole_points:r.bestHolePoints|0,
-                eclectic_total:r.eclecticTotal|0,
-                best_per_hole: Array.isArray(r.bestPerHole) ? r.bestPerHole.map(n=>Number(n)||0) : Array(18).fill(0),
-              }));
-            const { error } = await client.from('season_standings').upsert(rows,{ onConflict:'name' });
-            if(error){ setStatusMsg(`Error: ${error.message}`); }
-            else { setStatusMsg('Connected'); }
+            const rows=Object.values(next).filter(r=>!isTeamLike(r.name)).map(r=>({
+              name:r.name, total_points:r.totalPoints|0, events:r.events|0, best_event_points:r.bestEventPoints|0, best_hole_points:r.bestHolePoints|0, eclectic_total:r.eclecticTotal|0, best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0),
+            }));
+            const {error}=await client.from('season_standings').upsert(rows,{onConflict:'name'});
+            if(error) setStatusMsg(`Error: ${error.message}`); else setStatusMsg('Connected');
           }
         }
 
-        // ---------- Ratings (THIS EVENT ONLY) ----------
-        const ratings = useMemo(()=>{
+        // Ratings (this event only)
+        const ratings=useMemo(()=>{
           const out=[];
-          for(let i=0;i<players.length;i++){
-            const p = players[i];
+          for(const p of players){
             if(isTeamLike(p.name)) continue;
-            const pars = (p.gender==='F') ? effectiveWomen : effectiveMen;
-            const {p3,p4,p5}=eventParAverages(p.perHole||[], pars);
-            out.push({
-              name:p.name,
-              p3:to1(p3), p4:to1(p4), p5:to1(p5),
-              total:(p3+p4+p5)
-            });
+            const pars=(p.gender==='F')?effectiveWomen:effectiveMen;
+            const {p3,p4,p5}=eventParAverages(p.perHole||[],pars);
+            out.push({name:p.name,p3:to1(p3),p4:to1(p4),p5:to1(p5),total:(p3+p4+p5)});
           }
           return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-        },[players, effectiveMen, effectiveWomen]);
+        },[players,effectiveMen,effectiveWomen]);
 
-        const fieldAvg = useMemo(()=>{
+        const fieldAvg=useMemo(()=>{
           let s3m=0,c3m=0,s4m=0,c4m=0,s5m=0,c5m=0;
           let s3f=0,c3f=0,s4f=0,c4f=0,s5f=0,c5f=0;
-
-          for(let i=0;i<players.length;i++){
-            const p = players[i];
+          for(const p of players){
             if(isTeamLike(p.name)) continue;
             const perHole=p.perHole||[];
             const pars=(p.gender==='F')?effectiveWomen:effectiveMen;
-            for(let h=0;h<Math.min(18, perHole.length); h++){
-              const pts=Number(perHole[h])||0; const par=Number(pars[h])||4;
-              if(p.gender==='F'){
-                if(par===3){s3f+=pts;c3f++;} else if(par===4){s4f+=pts;c4f++;} else if(par===5){s5f+=pts;c5f++;}
-              }else{
-                if(par===3){s3m+=pts;c3m++;} else if(par===4){s4m+=pts;c4m++;} else if(par===5){s5m+=pts;c5m++;}
-              }
+            for(let h=0;h<Math.min(18,perHole.length);h++){
+              const pts=Number(perHole[h])||0, par=Number(pars[h])||4;
+              if(p.gender==='F'){ if(par===3){s3f+=pts;c3f++;} else if(par===4){s4f+=pts;c4f++;} else if(par===5){s5f+=pts;c5f++;} }
+              else{ if(par===3){s3m+=pts;c3m++;} else if(par===4){s4m+=pts;c4m++;} else if(par===5){s5m+=pts;c5m++;} }
             }
           }
-          const avg = (s,c)=>c?to1(s/c):0;
-          return {
-            men:{ p3:avg(s3m,c3m), p4:avg(s4m,c4m), p5:avg(s5m,c5m) },
-            women:{ p3:avg(s3f,c3f), p4:avg(s4f,c4f), p5:avg(s5f,c5f) }
-          };
-        },[players, effectiveMen, effectiveWomen]);
+          const avg=(s,c)=>c?to1(s/c):0;
+          return {men:{p3:avg(s3m,c3m),p4:avg(s4m,c4m),p5:avg(s5m,c5m)}, women:{p3:avg(s3f,c3f),p4:avg(s4f,c4f),p5:avg(s5f,c5f)}};
+        },[players,effectiveMen,effectiveWomen]);
 
-        // Export Squabbit (First, Last, Handicap) using nextPlaying
         function exportSquabbitHandicaps(){
           if(!computed.length) return;
           const rows=[["First","Last","Handicap"]];
-          computed
-            .filter(r=>r && r.name && !isTeamLike(r.name))
-            .forEach(r=>{
-              const { first, last } = splitFirstLast(r.name);
-              const h = Number.isFinite(r.nextPlaying)
-                ? r.nextPlaying.toFixed(1)
-                : (Number.isFinite(r.startExact) ? Number(r.startExact).toFixed(1) : "0.0");
-              rows.push([first, last, h]);
-            });
+          computed.filter(r=>r && r.name && !isTeamLike(r.name)).forEach(r=>{
+            const {first,last}=splitFirstLast(r.name);
+            const h=Number.isFinite(r.nextPlaying)?r.nextPlaying.toFixed(1):(Number.isFinite(r.startExact)?Number(r.startExact).toFixed(1):"0.0");
+            rows.push([first,last,h]);
+          });
           downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
         }
 
-        // ---------- Library state & actions ----------
-        const [library, setLibrary] = useState(()=>loadLibrary());
-
+        // Library state
+        const [library,setLibrary]=useState(()=>loadLibrary());
         function saveCurrentEventToLibrary(){
           if(!players.length) return;
-          // reconstruct a minimal CSV from current computed + per-hole for fidelity
-          // Simpler: keep original text is best — but here we only have parsed objects if user imported via file.
-          // So we just store an "event snapshot CSV" reconstructed from computed + per-hole.
-          // Alternatively, prompt user to re-import using Library → Import To Library (multiple).
-          const name = prompt("Name for this event in Library:", eventName || "Event") || (eventName || "Event");
-          // We can't guarantee original CSV text unless imported via Library; so we store a CSV of our export.
-          const rows = [
-            ["Event", eventName, "Date", dateStr],
-            [],
-            ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]
-          ];
-          computed.forEach(r => rows.push([r.name, r.gender, Math.round(r.startExact), r.points, r.back9, r.position, r.leaguePoints, r.nextExact.toFixed(1), r.nextPlaying]));
-          const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n");
-          const items = addToLibraryItems(library, name, dateStr, csv);
+          const name=prompt("Name for this event in Library:", eventName || "Event") || (eventName || "Event");
+          const rows=[["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
+          computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]));
+          const csv=rows.map(r=>r.map(csvEscape).join(",")).join("\n");
+          const items=addToLibraryItems(library,name,dateStr,csv);
           setLibrary(items);
         }
-
         function loadLibraryItem(item){
-          // Use our parser, but note this CSV is our event export (not Squabbit detail) – points & back9 are there; per-hole won't be present.
-          const parsed = parseSquabbitCSV(item.csv);
-          // If it's our export (no per-hole), parser will return empty players; so fallback to a minimal loader:
+          // Try parse; if it's our export, we rebuild players minimally
+          const parsed=parseSquabbitCSV(item.csv);
           if(!parsed.players.length){
-            const lines = item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
-            const idxHeader = lines.findIndex(r=>r[0]==='Name' && r[1]==='Gender');
+            const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
+            const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
             const players=[];
             if(idxHeader>=0){
               for(let i=idxHeader+1;i<lines.length;i++){
-                const r=lines[i];
-                if(!r || !r[0]) break;
-                players.push({
-                  name:r[0], gender:r[1]||'M',
-                  handicap: Number(r[2])||0,
-                  points: Number(r[3])||0,
-                  back9: Number(r[4])||0,
-                  perHole: [] // not available in this export
-                });
+                const r=lines[i]; if(!r||!r[0]) break;
+                players.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
               }
             }
-            setPlayers(players);
-            setDetectedMen(null); setDetectedWomen(null);
-            setUseDetected(true);
+            setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
           }else{
-            setPlayers(parsed.players||[]);
-            setDetectedMen(parsed.detectedMen||null);
-            setDetectedWomen(parsed.detectedWomen||null);
-            setUseDetected(true);
+            setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen||null); setUseDetected(true);
           }
-          setEventName(item.name||'Event');
-          setDateStr(item.date||new Date().toISOString().slice(0,10));
-          window.scrollTo({top:0, behavior:'smooth'});
+          setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
+          window.scrollTo({top:0,behavior:'smooth'});
         }
+        function promptRename(item){ const nn=prompt("Rename event:", item.name||"Event"); if(nn&&nn.trim()){ setLibrary(renameLibraryItem(library,item.id,nn.trim())); } }
+        function removeItem(item){ if(confirm(`Delete "${item.name}" from Library?`)){ setLibrary(deleteLibraryItem(library,item.id)); } }
 
-        function promptRename(item){
-          const nn = prompt("Rename event:", item.name||"Event");
-          if(nn && nn.trim()){
-            const next = renameLibraryItem(library, item.id, nn.trim());
-            setLibrary(next);
-          }
-        }
-
-        function removeItem(item){
-          if(confirm(`Delete "${item.name}" from Library?`)){
-            const next = deleteLibraryItem(library, item.id);
-            setLibrary(next);
-          }
-        }
-
-        // ---------- UI helpers ----------
-        const chip = label => <span className="chip mono">{label}</span>;
-
-        // ---------- Derived views ----------
-        const seasonSortedByPoints = useMemo(()=>{
-          return Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
-            .sort((a,b)=> (b.totalPoints - a.totalPoints) || a.name.localeCompare(b.name));
-        },[season]);
-
-        const seasonSortedByEclectic = useMemo(()=>{
-          return Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
-            .sort((a,b)=> ((b.eclecticTotal??0) - (a.eclecticTotal??0)) || a.name.localeCompare(b.name));
-        },[season]);
+        // Derived season views
+        const seasonSortedByPoints=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name)),[season]);
+        const seasonSortedByEclectic=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name)),[season]);
 
         return (
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
@@ -735,49 +512,23 @@
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
                 <div>
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>
-                    Supabase: {statusMsg}
-                  </p>
-                  <p className="text-xs text-neutral-500 owner-only">
-                    Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code>
-                  </p>
+                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>Supabase: {statusMsg}</p>
+                  <p className="text-xs text-neutral-500 owner-only">Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code></p>
                 </div>
                 <div className="flex gap-2 items-center">
                   <input className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} />
                   <input type="date" className="px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
-
                   <button
                     onClick={() =>
-                      downloadCSV(
-                        `DenSociety_${dateStr.replace(/-/g, '')}.csv`,
-                        [
-                          ["Event", eventName, "Date", dateStr],
-                          [],
-                          ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-                          ...computed.map(r=>[
-                            r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying
-                          ])
-                        ]
-                      )
-                    }
-                    className="btn btn-primary disabled:opacity-40"
-                    disabled={!players.length}
-                  >
-                    Export Event CSV
-                  </button>
-
-                  <button
-                    onClick={exportSquabbitHandicaps}
-                    className="btn btn-indigo disabled:opacity-40"
-                    disabled={!players.length}
-                    title="Exports First, Last, Handicap for Squabbit"
-                  >
-                    Export to Squabbit (Handicaps)
-                  </button>
+                      downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
+                        [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
+                          ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])])}
+                    className="btn btn-primary disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
+                  <button onClick={exportSquabbitHandicaps} className="btn btn-indigo disabled:opacity-40" disabled={!players.length} title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
                 </div>
               </header>
 
-              {/* Library (Saved CSVs) */}
+              {/* SAVED EVENTS (LIBRARY) */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Saved Events (Library)</h2>
@@ -785,12 +536,10 @@
                     <label className="btn btn-outline cursor-pointer">Import to Library
                       <input type="file" accept=".csv" multiple className="hidden" onChange={e=>{ if(e.target.files?.length){ importManyToLibrary(e.target.files); e.target.value=''; } }} />
                     </label>
-                    <button className="btn btn-emerald disabled:opacity-40" disabled={!players.length} onClick={saveCurrentEventToLibrary}>
-                      Save Current Event → Library
-                    </button>
+                    <button className="btn btn-emerald disabled:opacity-40" disabled={!players.length} onClick={saveCurrentEventToLibrary}>Save Current Event → Library</button>
                   </div>
                 </div>
-                <p className="text-xs text-neutral-500 mb-3">Stores up to {MAX_SAVED} CSVs locally in this browser. Click <em>Load</em> to view scores & ratings.</p>
+                <p className="text-xs text-neutral-500 mb-3">Keeps up to 16 CSVs locally in this browser. Click <em>Load</em> to view one.</p>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -802,9 +551,7 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {library.length===0 && (
-                        <tr><td colSpan="4" className="py-3 text-neutral-500">No saved events yet.</td></tr>
-                      )}
+                      {library.length===0 && (<tr><td colSpan="4" className="py-3 text-neutral-500">No saved events yet.</td></tr>)}
                       {library.map(item=>(
                         <tr key={item.id} className="border-b">
                           <td className="font-medium">{item.name}</td>
@@ -816,10 +563,7 @@
                             <button className="btn btn-danger" onClick={()=>removeItem(item)}>Delete</button>
                             <button className="btn btn-outline" onClick={()=>{
                               const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
-                              const a=document.createElement('a');
-                              a.href=URL.createObjectURL(blob);
-                              a.download=`${item.name||'Event'}.csv`;
-                              a.click();
+                              const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${item.name||'Event'}.csv`; a.click();
                             }}>Download</button>
                           </td>
                         </tr>
@@ -840,31 +584,22 @@
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
                   </div>
                 </div>
-                {/* Event title + date chips */}
                 <div className="flex items-center gap-2 mb-4">
                   <span className="chip mono">{eventName || "Untitled Event"}</span>
                   <span className="chip mono">{prettyDate(dateStr)}</span>
                 </div>
-
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {computed.length===0 && (
-                        <tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV to see the event.</td></tr>
-                      )}
-                      {computed.map((r,i)=> (
+                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV to see the event.</td></tr>)}
+                      {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
-                          <td>{r.position}</td>
-                          <td>{r.name}</td>
-                          <td>{r.gender}</td>
-                          <td>{Math.round(r.startExact)}</td>
-                          <td>{r.points}</td>
-                          <td>{r.back9}</td>
-                          <td>{r.leaguePoints}</td>
-                          <td>{r.nextPlaying}</td>
+                          <td>{r.position}</td><td>{r.name}</td><td>{r.gender}</td>
+                          <td>{Math.round(r.startExact)}</td><td>{r.points}</td><td>{r.back9}</td>
+                          <td>{r.leaguePoints}</td><td>{r.nextPlaying}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -880,8 +615,7 @@
                   <div className="flex gap-2">
                     <button onClick={()=>{
                       const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-                        ...seasonSortedByPoints.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])
-                      ];
+                        ...seasonSortedByPoints.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
                       downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary">Export Standings</button>
                     <button onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
@@ -895,15 +629,10 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {seasonSortedByPoints.map((r,i)=> (
+                      {seasonSortedByPoints.map((r,i)=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td>
-                          <td>{r.name}</td>
-                          <td>{r.events}</td>
-                          <td>{r.totalPoints}</td>
-                          <td>{r.bestEventPoints ?? 0}</td>
-                          <td>{r.bestHolePoints ?? 0}</td>
-                          <td>{r.eclecticTotal ?? 0}</td>
+                          <td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td>
+                          <td>{r.bestEventPoints ?? 0}</td><td>{r.bestHolePoints ?? 0}</td><td>{r.eclecticTotal ?? 0}</td>
                         </tr>
                       ))}
                       {seasonSortedByPoints.length===0 && <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>}
@@ -920,8 +649,7 @@
                     <button onClick={()=>{
                       const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
                       const rows=[header,
-                        ...seasonSortedByEclectic.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
-                      ];
+                        ...seasonSortedByEclectic.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])];
                       downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary" disabled={!seasonSortedByEclectic.length}>Export Eclectic CSV</button>
                   </div>
@@ -937,9 +665,7 @@
                     <tbody>
                       {seasonSortedByEclectic.map((r,i)=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td>
-                          <td>{r.name}</td>
-                          <td>{r.eclecticTotal ?? 0}</td>
+                          <td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal ?? 0}</td>
                           {(r.bestPerHole??Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
                         </tr>
                       ))}
@@ -950,35 +676,26 @@
                 <p className="text-xs text-neutral-500 mt-2">Eclectic = best Stableford per hole (H1–H18) across all uploaded events.</p>
               </section>
 
-              {/* Ratings with pill highlights */}
+              {/* Ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
-                  <button
-                    className="btn btn-primary disabled:opacity-40"
-                    disabled={!ratings.length}
+                  <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
                     onClick={()=>{
-                      const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
+                      const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
                       ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
                       downloadCSV(`DenSociety_EventRatings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`, rows);
-                    }}
-                  >Export Ratings</button>
+                    }}>Export Ratings</button>
                 </div>
-
                 <div className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                   <div className="mono text-sm overflow-auto">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="chip mono">Men</span> <span>{effectiveMen.join(', ')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="chip mono">Women</span> <span>{effectiveWomen.join(', ')}</span>
-                    </div>
+                    <div className="flex items-center gap-2 mb-1"><span className="chip mono">Men</span> <span>{effectiveMen.join(', ')}</span></div>
+                    <div className="flex items-center gap-2"><span className="chip mono">Women</span> <span>{effectiveWomen.join(', ')}</span></div>
                   </div>
                 </div>
-
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -993,38 +710,21 @@
                       {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
                           <td className="font-medium">{r.name}</td>
-
                           <td>{r.p3.toFixed(1)}</td>
-                          <td>
-                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>
-                              {ratingLabel(r.p3)}
-                            </span>
-                          </td>
-
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
                           <td>{r.p4.toFixed(1)}</td>
-                          <td>
-                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>
-                              {ratingLabel(r.p4)}
-                            </span>
-                          </td>
-
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
                           <td>{r.p5.toFixed(1)}</td>
-                          <td>
-                            <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>
-                              {ratingLabel(r.p5)}
-                            </span>
-                          </td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
                         </tr>
                       ))}
-                      {!ratings.length && (
-                        <tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see event ratings.</td></tr>
-                      )}
+                      {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV to see event ratings.</td></tr>)}
                     </tbody>
                   </table>
                 </div>
               </section>
 
-              {/* Owner-only: Course pars input */}
+              {/* Course setup (owner) */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
                 <h2 className="text-lg font-semibold mb-2">Course Setup — Pars for Ratings</h2>
                 <p className="text-sm text-neutral-600 mb-2">
@@ -1035,25 +735,14 @@
                   <input type="checkbox" checked={useDetected} onChange={e=>setUseDetected(e.target.checked)} />
                   Use detected pars from CSV (if available)
                 </label>
-
                 <div className="grid md:grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm block mb-1">Manual Men pars (18 comma-separated)</label>
-                    <input
-                      className="w-full border rounded-xl p-2 mono bg-white"
-                      value={parsMenStr}
-                      onChange={e=>{ setParsMenStr(e.target.value); localStorage.setItem('den_pars_men', e.target.value); }}
-                      placeholder="e.g. 5,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4"
-                    />
+                    <input className="w-full border rounded-xl p-2 mono bg-white" value={parsMenStr} onChange={e=>{ setParsMenStr(e.target.value); localStorage.setItem('den_pars_men', e.target.value); }} />
                   </div>
                   <div>
                     <label className="text-sm block mb-1">Manual Women pars (18 comma-separated)</label>
-                    <input
-                      className="w-full border rounded-xl p-2 mono bg-white"
-                      value={parsWomenStr}
-                      onChange={e=>{ setParsWomenStr(e.target.value); localStorage.setItem('den_pars_women', e.target.value); }}
-                      placeholder="e.g. 5,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4"
-                    />
+                    <input className="w-full border rounded-xl p-2 mono bg-white" value={parsWomenStr} onChange={e=>{ setParsWomenStr(e.target.value); localStorage.setItem('den_pars_women', e.target.value); }} />
                   </div>
                 </div>
               </section>
@@ -1062,7 +751,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Use <strong>Saved Events (Library)</strong> to keep up to {MAX_SAVED} CSVs in this browser. Click <em>Load</em> to view one.</li>
+                  <li>Use <strong>Saved Events (Library)</strong> to keep up to 16 CSVs in this browser. Click <em>Load</em> to view one.</li>
                   <li>Or import a Squabbit CSV directly in <strong>Event Players</strong>.</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
