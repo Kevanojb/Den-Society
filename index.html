@@ -76,16 +76,13 @@
         const rows=text.replace(/\r/g,'').split('\n');
         return rows.map(line=>{
           const d=line.includes('\t')?'\t':',';
-          // NOTE: keep empties; trim quotes; don't collapse yet
-          return line.split(d).map(s=>(s??'').replace(/^"|"$/g,'').trim());
+          return line.split(d).map(s=>(s||'').replace(/^"|"$/g,'').trim());
         });
       }
       function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
-      const nonEmpty = row => row.map(c => String(c||'').trim()).filter(Boolean);
-
       function readStablefordPerHole(row){
         let start=-1;
-        for(let i=0;i<row.length;i++){ if(/^stableford$/i.test(String(row[i]).trim())){ start=i; break; } }
+        for(let i=0;i<row.length;i++){ if(String(row[i]).trim()==='Stableford'){ start=i; break; } }
         if(start<0) return Array(18).fill(0);
         const vals=[];
         for(let j=start+1;j<row.length && vals.length<18;j++){
@@ -98,7 +95,6 @@
         while(vals.length<18) vals.push(0);
         return vals.slice(0,18);
       }
-
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
@@ -130,74 +126,44 @@
         return { men: detected||null, women: detected||null };
       }
 
-      // --- 2024 (old format) detection/reader ---
+      // --- 2024 helpers (old format) ---
       function findOldTotalsHeaderRow(lines){
-        // find the single line "Stableford"
-        let stableRow = -1;
-        for (let i=0;i<lines.length;i++){
-          const r = nonEmpty(lines[i]);
-          if (r.length===1 && /^stableford$/i.test(r[0])) { stableRow = i; break; }
-        }
-        if (stableRow<0) return -1;
-
-        // search the next ~8 lines for header "Player | Round 1 | Total" with blanks tolerated
-        for (let i=stableRow+1; i<Math.min(stableRow+10, lines.length); i++){
-          const nn = nonEmpty(lines[i]).map(x=>x.toLowerCase());
-          if (nn.length>=2 && nn[0]==='player' && (nn[1]==='round 1' || nn[1]==='round1')) {
-            // "Total" may be present (3rd non-empty) but some exports only have Player/Round 1 then Total on the next cell group
-            if (nn.includes('total') || nn.length===2) return i;
-          }
-        }
-        // Fallback: anywhere else
-        for (let i=0;i<lines.length;i++){
-          const nn = nonEmpty(lines[i]).map(x=>x.toLowerCase());
-          if (nn.length>=2 && nn[0]==='player' && (nn[1]==='round 1' || nn[1]==='round1')) return i;
+        for(let i=0;i<lines.length;i++){
+          const r = lines[i] || [];
+          const c0 = String(r[0]||'').trim().toLowerCase();
+          const c1 = String(r[1]||'').trim().toLowerCase();
+          const c2 = String(r[2]||'').trim().toLowerCase();
+          if (c0==='player' && (c1==='round 1' || c1==='round1') && c2==='total') return i;
         }
         return -1;
       }
-
       function readOldTotals(lines, headerRow){
         const totals = {};
-        for (let i=headerRow+1; i<lines.length; i++){
-          const rawRow = lines[i] || [];
-          // stop at blank or a Team section
-          const nn = nonEmpty(rawRow);
-          if (nn.length===0) break;
-          const joined = nn.join(' ').toLowerCase();
-          if (/^team( |$)/.test(joined) || joined.includes('team average')) break;
-
-          // first non-empty cell is the name
-          const name = String(nn[0]||'').trim();
-          if (!name || isTeamLike(name)) continue;
-
-          // find the last numeric in the row (handles "Round 1" and "Total" both present)
-          let lastNum = NaN;
-          for (let c=rawRow.length-1; c>=1; c--){
-            const maybe = parseFloat(String(rawRow[c]||'').replace(/[^0-9.\-]/g,''));
-            if (Number.isFinite(maybe)) { lastNum = maybe; break; }
+        for(let i=headerRow+1;i<lines.length;i++){
+          const r = lines[i] || [];
+          const name = String(r[0]||'').trim();
+          if(!name) break;
+          if (isTeamLike(name)) continue;
+          let total = NaN;
+          for(let k=1;k<r.length;k++){
+            const val = parseFloat(String(r[k]||'').replace(/[^0-9.\-]/g,''));
+            if (Number.isFinite(val)) { total = val; break; }
           }
-          if (Number.isFinite(lastNum)) totals[name]=lastNum;
+          if (Number.isFinite(total)) totals[name]=total;
         }
         return totals;
       }
-
       function extractCardForPlayer(lines, playerName){
-        // find a row whose first cell equals the (possibly shortened) name
         for (let i=0;i<lines.length-1;i++){
           const row = lines[i] || [];
-          const first = String(row[0]||'').trim();
-          if (!first || first !== playerName) continue;
-
-          // sniff gender and handicap from that row
+          if (String(row[0]||'').trim() !== playerName) continue;
           const rowStr = row.join(' ').toLowerCase();
           const gender = /(red tee|women|ladies)/.test(rowStr) ? 'F' : 'M';
-
           let handicap = NaN;
           for (let k=1;k<row.length;k++){
             const maybe = parseFloat(String(row[k]||'').replace(/[^0-9.\-]/g,''));
             if (Number.isFinite(maybe)) { handicap = maybe; break; }
           }
-
           const st = lines[i+1] || [];
           if (!st.some(c => /^stableford$/i.test(String(c||'').trim()))) continue;
           const perHole = readStablefordPerHole(st);
@@ -213,7 +179,7 @@
         const isHcap = v => /^(hd?c?p|hcap|hcp|handicap)$/i.test(String(v||'').trim());
         for (let i=0;i<lines.length;i++){
           const r = lines[i]||[];
-          for (let c=0;c<Math.min(4,r.length);c++){
+          for (let c=0;c<Math.max(3,r.length);c++){
             if (isName(r[c]) && isHcap(r[c+1])) return i;
           }
         }
@@ -251,7 +217,6 @@
               const nm=(lines[i][0]||'').trim();
               if(!nm) break;
               if(isTeamLike(nm)) continue;
-              // take first numeric after the name
               let val = NaN;
               for(let k=1;k<lines[i].length;k++){
                 const maybe = parseFloat(String(lines[i][k]||'').replace(/[^0-9.\-]/g,''));
@@ -259,8 +224,6 @@
               }
               if(Number.isFinite(val)) totals[nm]=val;
             }
-          } else {
-            // totals may be missing; we'll sum per-hole if available later
           }
         } else {
           // 2024-style totals header
@@ -289,21 +252,14 @@
           else if (genderMap[nm]==null) genderMap[nm]='M';
         }
 
-        const outPlayers = players.map(p => {
-          // if totals missing but we have per-hole, total = sum
-          let totalPts = totals[p.name] || 0;
-          if (!totalPts && holeData[p.name]?.perHole?.length) {
-            totalPts = holeData[p.name].perHole.reduce((s,v)=>s+(Number(v)||0),0);
-          }
-          return {
-            name: p.name,
-            gender: genderMap[p.name] || p.gender || 'M',
-            handicap: Number.isFinite(handicapMap[p.name]) ? handicapMap[p.name] : p.handicap,
-            points: totalPts,
-            back9: holeData[p.name]?.back9 || 0,
-            perHole: holeData[p.name]?.perHole || []
-          };
-        });
+        const outPlayers = players.map(p => ({
+          name: p.name,
+          gender: genderMap[p.name] || p.gender || 'M',
+          handicap: Number.isFinite(handicapMap[p.name]) ? handicapMap[p.name] : p.handicap,
+          points: totals[p.name] || 0,
+          back9: holeData[p.name]?.back9 || 0,
+          perHole: holeData[p.name]?.perHole || []
+        }));
 
         return {
           detectedMen: detectedBoth.men,
@@ -367,7 +323,7 @@
         useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
         useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
 
-        // Supabase defaults
+        // Supabase defaults (owner-only UI; hidden for others)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
@@ -584,14 +540,14 @@
           if(!parsed.players.length){
             const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
             const idxHeader=lines.findIndex(r=>r[0]==='Name'&&r[1]==='Gender');
-            const playersArr=[];
+            const players=[];
             if(idxHeader>=0){
               for(let i=idxHeader+1;i<lines.length;i++){
                 const r=lines[i]; if(!r||!r[0]) break;
-                playersArr.push({name:r[0],gender:r[1]||'M',handicap:Number(r[2])||0,points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
+                players.push({name:r[0],gender:r[1]||'M',handicap(Number(r[2])||0),points:Number(r[3])||0,back9:Number(r[4])||0,perHole:[]});
               }
             }
-            setPlayers(playersArr); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
+            setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
           }else{
             setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen||null); setUseDetected(true);
           }
@@ -887,3 +843,4 @@
     </script>
   </body>
 </html>
+
