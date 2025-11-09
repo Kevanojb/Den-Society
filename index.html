@@ -114,7 +114,7 @@
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
+          if(raw==='P'||raw==='p'||'\\'===raw){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
@@ -478,7 +478,6 @@
           setLibrary(items);
         }
         function loadLibraryItem(item){
-          // Try parse; if it's our export, we rebuild players minimally
           const parsed=parseSquabbitCSV(item.csv);
           if(!parsed.players.length){
             const lines=item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
@@ -492,7 +491,7 @@
             }
             setPlayers(players); setDetectedMen(null); setDetectedWomen(null); setUseDetected(true);
           }else{
-            setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen||null); setUseDetected(true);
+            setPlayers(parsed.players||[]); setDetectedMen(parsed.detectedMen||null); setDetectedWomen(parsed.detectedWomen)||null; setUseDetected(true);
           }
           setEventName(item.name||'Event'); setDateStr(item.date||new Date().toISOString().slice(0,10));
           window.scrollTo({top:0,behavior:'smooth'});
@@ -563,9 +562,10 @@
                             <button className="btn btn-danger" onClick={()=>removeItem(item)}>Delete</button>
                             <button className="btn btn-outline" onClick={()=>{
                               const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
-                              const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download={`${
-                                (item.name||'Event')
-                              }.csv`; a.click();
+                              const a=document.createElement('a');
+                              a.href=URL.createObjectURL(blob);
+                              a.download = `${(item.name||'Event')}.csv`;   // ← fixed backtick + template string
+                              a.click();
                             }}>Download</button>
                           </td>
                         </tr>
@@ -694,12 +694,11 @@
                     }}>Export Ratings</button>
                 </div>
 
-                {/* Simple explanation */}
                 <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800 mb-4">
                   <div className="font-medium mb-1">How to read this</div>
                   <ul className="list-disc pl-5 space-y-0.5">
                     <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
-                    <li>We average your per-hole Stableford by par type (**Par-3**, **Par-4**, **Par-5**) for this event.</li>
+                    <li>We average your per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
                     <li>Colour badges:
                       <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>,
                       <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
