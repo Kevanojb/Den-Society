@@ -38,6 +38,7 @@
       const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
       const to1 = x => Math.round((Number(x)||0)*10)/10;
+      const prettyDate = (iso) => { try { const d=new Date(iso); return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});} catch { return iso||''; } };
       function splitFirstLast(fullName){ const raw=(fullName||'').trim().replace(/\s+/g,' '); if(!raw) return {first:'',last:''}; const parts=raw.split(' '); if(parts.length===1) return {first:parts[0],last:''}; const last=parts.pop(); return {first:parts.join(' '), last}; }
 
       // ---------- Handicap maths ----------
@@ -56,8 +57,34 @@
         return {nextExact:bounded,nextPlaying:nextPlay};
       }
 
-      // ---------- Name filters ----------
-      const isTeamLike = name => /^(team(\s*\d+)?)$/i.test(name||'') || /^team average$/i.test(name||'') || /^stableford$/i.test(name||'');
+      // ---------- Name filters (expanded to ignore headers like "Players") ----------
+      const isTeamLike = name => {
+        const s = (name||'').trim();
+        return (
+          /^(team(\s*\d+)?)$/i.test(s) ||
+          /^team average$/i.test(s) ||
+          /^stableford$/i.test(s) ||
+          /^strokeplay$/i.test(s) ||
+          /^players?$/i.test(s) ||
+          /^round\s*\d+$/i.test(s) ||
+          /^out$/i.test(s) ||
+          /^in$/i.test(s) ||
+          /^total$/i.test(s) ||
+          /^s\.i\.$/i.test(s) ||
+          /^par$/i.test(s)
+        );
+      };
+
+      // Extra sanity: accept only "human-ish" names when auto-creating from totals
+      const looksLikePersonName = name => {
+        const s = (name||'').trim();
+        if (!s) return false;
+        if (isTeamLike(s)) return false;
+        // at least one letter, not just digits/punctuation, longer than 2 chars
+        if (!/[A-Za-z]/.test(s)) return false;
+        if (s.length < 3) return false;
+        return true;
+      };
 
       // ---------- Supabase helpers ----------
       function normalizeUrl(u){ if(!u) return ''; let s=String(u).trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='https://'+s; try{ const url=new URL(s); return `https://${url.host}`; }catch{ return ''; } }
@@ -70,7 +97,7 @@
       }
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
-      // ---------- CSV parsing (2024/2025 tolerant) ----------
+      // ---------- CSV parsing (2024 + 2025 tolerant) ----------
       function splitSmart(raw){
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
@@ -130,7 +157,7 @@
 
         const detectedBoth=detectBothParsFromLines(lines);
 
-        // 2025 roster (Name/Hdcp) — optional
+        // Optional 2025 roster table (Name/Hdcp)
         let playerHeaderRow=-1;
         for(let i=0;i<lines.length;i++){
           if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
@@ -146,7 +173,7 @@
           }
         }
 
-        // Gender hints
+        // Gender hints from tee text
         const genderMap={};
         for(const row of lines){
           const nm=(row[0]||'').trim(); if(!nm) continue;
@@ -156,7 +183,7 @@
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table under "Stableford"
+        // Totals table under a "Stableford" header (works for 2024 + 2025)
         let totalsStart=-1;
         for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
         const totals={};
@@ -167,14 +194,18 @@
             const b=toNum(row[1]);
             const c=toNum(row[2]);
             if(!a){ if(i>totalsStart+1) break; else continue; }
-            if(isTeamLike(a)) continue;
+            if(!looksLikePersonName(a)) continue;  // << block headers like "Players", "Team Average", etc.
             const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
             if(Number.isFinite(pts)) totals[a]=pts;
-            if(!players.some(p=>p.name===a)) players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
+
+            // Only auto-create a player if it truly looks like a person and not already present
+            if(!players.some(p=>p.name===a)){
+              players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
+            }
           }
         }
 
-        // Per-hole retrieval
+        // Per-hole retrieval from detailed cards
         const holeData={};
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
@@ -238,16 +269,32 @@
         return 0;
       }
 
+      // ---------- Library (localStorage) ----------
+      const LIB_KEY='den_saved_events_v1';
+      const MAX_SAVED=16;
+      function loadLibrary(){ try{ const raw=localStorage.getItem(LIB_KEY); const arr=raw?JSON.parse(raw):[]; return Array.isArray(arr)?arr:[]; }catch{ return []; } }
+      function saveLibrary(items){ try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0,MAX_SAVED))); }catch{} }
+      function addToLibraryItems(items, name, date, csv){
+        const id=Date.now()+'_'+Math.random().toString(36).slice(2,8);
+        const size=new Blob([csv]).size;
+        const rec={id,name:name||'Event',date:date||new Date().toISOString().slice(0,10),csv,size,savedAt:new Date().toISOString()};
+        const next=[rec,...items].slice(0,MAX_SAVED); saveLibrary(next); return next;
+      }
+      function renameLibraryItem(items,id,newName){ const next=items.map(it=>it.id===id?{...it,name:newName}:it); saveLibrary(next); return next; }
+      function deleteLibraryItem(items,id){ const next=items.filter(it=>it.id!==id); saveLibrary(next); return next; }
+
       // ---------- App ----------
       function App(){
-        // Owner Mode (kept, but URL/Key UI removed below)
-        const [ownerMode,setOwnerMode]=useState(false);
+        // Owner Mode
+        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
         useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
-        useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); setOwnerMode(v=>!v); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[]);
+        useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
 
-        // Supabase defaults (silent)
+        // Supabase defaults (hidden by default; visible in Owner Mode)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+        const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
+        const [supaKEY,setSupaKEY]=useState(localStorage.getItem('supa_key')||defaultKEY);
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
@@ -261,7 +308,9 @@
           async function boot(){
             try{
               if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,600); return; }
-              const c=makeSupabaseClient(defaultURL, defaultKEY);
+              const u=normalizeUrl(localStorage.getItem('supa_url')||defaultURL);
+              const k=cleanKey(localStorage.getItem('supa_key')||defaultKEY);
+              const c=makeSupabaseClient(u,k);
               if(!c){ setStatusMsg('Invalid URL or key'); return; }
               if(cancelled) return;
               setClient(c);
@@ -318,6 +367,22 @@
           await refreshShared();
         }
 
+        async function saveSupa(){
+          const u=normalizeUrl((supaURL||defaultURL));
+          const k=cleanKey((supaKEY||defaultKEY));
+          localStorage.setItem('supa_url',u);
+          localStorage.setItem('supa_key',k);
+          setStatusMsg('Checking connection…');
+          try{
+            const c=makeSupabaseClient(u,k);
+            setClient(c);
+            const res=await probe(c);
+            setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
+            if(res.ok) await fetchSeasonWith(c);
+            if(res.ok) await refreshShared(c);
+          }catch(e){ setStatusMsg(`Error: ${String(e?.message||e)}`); }
+        }
+
         // Event + season data
         const [eventName,setEventName]=useState("Den Society Meeting");
         const [dateStr,setDateStr]=useState(()=>new Date().toISOString().slice(0,10));
@@ -325,6 +390,8 @@
         const [season,setSeason]=useState({});
 
         // Pars state
+        const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+        const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
         const [detectedMen,setDetectedMen]=useState(null);
         const [detectedWomen,setDetectedWomen]=useState(null);
         const [useDetected,setUseDetected]=useState(true);
@@ -373,6 +440,7 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
+          // choose winner(s) among top group by countback (could be multiple if absolutely identical)
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -381,6 +449,7 @@
             else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
+
           let pos=1; const out=[];
           for(const g of groups){
             const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
@@ -459,49 +528,34 @@
           return {men:{p3:avg(s3m,c3m),p4:avg(s4m,c4m),p5:avg(s5m,c5m)}, women:{p3:avg(s3f,c3f),p4:avg(s4f,c4f),p5:avg(s5f,c5f)}};
         },[players,effectiveMen,effectiveWomen]);
 
-        function exportSquabbitHandicaps(){
-          if(!computed.length) return;
-          const rows=[["First","Last","Handicap"]];
-          computed.filter(r=>r && r.name && !isTeamLike(r.name)).forEach(r=>{
-            const {first,last}=splitFirstLast(r.name);
-            const h=Number.isFinite(r.nextPlaying)?r.nextPlaying.toFixed(1):(Number.isFinite(r.startExact)?Number(r.startExact).toFixed(1):"0.0");
-            rows.push([first,last,h]);
-          });
-          downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
-        }
-
-        // Derived season views
-        const seasonSortedByPoints=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name)),[season]);
-        const seasonSortedByEclectic=useMemo(()=>Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name)),[season]);
-
+        // ---------- UI ----------
         return (
           <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
             <div className="max-w-6xl mx-auto space-y-6">
 
               {/* Header */}
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
-                <div className="flex-1 min-w-0">
+                <div className="flex-1">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
+                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>Supabase: {statusMsg}</p>
+                  <p className="text-xs text-neutral-500 owner-only">Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code></p>
                 </div>
-                <div className="flex gap-2 items-center w-full md:w-auto">
-                  <input
-                    className="px-3 py-2 rounded-xl border border-neutral-300 bg-white flex-1 min-w-0 md:w-[520px]"
-                    value={eventName}
-                    onChange={e=>setEventName(e.target.value)}
-                    placeholder="Event name"
-                  />
-                  <input
-                    type="date"
-                    className="px-3 py-2 rounded-xl border border-neutral-300 bg-white md:w-[220px] w-[180px]"
-                    value={dateStr}
-                    onChange={e=>setDateStr(e.target.value)}
-                  />
+                <div className="flex gap-2 items-center w-full md:w-auto md:min-w-[520px]">
+                  <input className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="Event name" />
+                  <input type="date" className="w-[200px] px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={dateStr} onChange={e=>setDateStr(e.target.value)} />
                 </div>
               </header>
 
-              {/* Past Den Society Golf Games (Supabase Shared) */}
+              {/* Past Den Society Golf Games (Supabase) — compact */}
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
-                <h2 className="text-lg font-semibold mb-2">Past Den Society Golf Games</h2>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold">Past Den Society Golf Games</h2>
+                  <div className="owner-only flex gap-2">
+                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaURL} onChange={e=>setSupaURL(e.target.value)} placeholder="Supabase URL" />
+                    <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} placeholder="Anon key" />
+                    <button onClick={saveSupa} className="btn btn-emerald">Save & Connect</button>
+                  </div>
+                </div>
                 <div className="space-y-1">
                   {shared.length===0 && <div className="text-sm text-neutral-500">No shared CSVs yet.</div>}
                   {shared.map(item=>(
@@ -525,23 +579,29 @@
                     <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)importCSV(f);}} />
                     </label>
+                    <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                    {/* Export buttons moved here */}
                     <button
                       onClick={() =>
                         downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
                           [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
                             ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])])}
-                      className="btn btn-primary disabled:opacity-40" disabled={!players.length}
-                      title="Export the current event results as CSV"
-                    >
-                      Export Event CSV
-                    </button>
-                    <button onClick={exportSquabbitHandicaps} className="btn btn-indigo disabled:opacity-40" disabled={!players.length} title="Exports First/Last/Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
-                    <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                      className="btn btn-primary disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
+                    <button onClick={()=>{
+                      if(!computed.length) return;
+                      const rows=[["First","Last","Handicap"]];
+                      computed.filter(r=>r && r.name && !isTeamLike(r.name)).forEach(r=>{
+                        const {first,last}=splitFirstLast(r.name);
+                        const h=Number.isFinite(r.nextPlaying)?r.nextPlaying.toFixed(1):(Number.isFinite(r.startExact)?Number(r.startExact).toFixed(1):"0.0");
+                        rows.push([first,last,h]);
+                      });
+                      downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
+                    }} className="btn btn-indigo disabled:opacity-40" disabled={!players.length} title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mb-4">
                   <span className="chip mono">{eventName || "Untitled Event"}</span>
-                  <span className="chip mono">{new Date(dateStr).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</span>
+                  <span className="chip mono">{prettyDate(dateStr)}</span>
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
@@ -549,7 +609,7 @@
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load one from Past Games.</td></tr>)}
+                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
                           <td>{r.position}</td><td>{r.name}</td><td>{r.gender}</td>
@@ -570,7 +630,9 @@
                   <div className="flex gap-2">
                     <button onClick={()=>{
                       const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-                        ...seasonSortedByPoints.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
+                        ...Object.values(season).filter(r=>!isTeamLike(r.name))
+                          .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name))
+                          .map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
                       downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary">Export Standings</button>
                     <button onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
@@ -584,13 +646,15 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {seasonSortedByPoints.map((r,i)=>(
+                      {Object.values(season).filter(r=>!isTeamLike(r.name))
+                        .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name))
+                        .map((r,i)=>(
                         <tr key={r.name} className="border-b">
                           <td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td>
                           <td>{r.bestEventPoints ?? 0}</td><td>{r.bestHolePoints ?? 0}</td><td>{r.eclecticTotal ?? 0}</td>
                         </tr>
                       ))}
-                      {seasonSortedByPoints.length===0 && <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>}
+                      {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -602,11 +666,12 @@
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
                   <div className="flex gap-2">
                     <button onClick={()=>{
+                      const list=Object.values(season).filter(r=>!isTeamLike(r.name))
+                        .sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name));
                       const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
-                      const rows=[header,
-                        ...seasonSortedByEclectic.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])];
+                      const rows=[header, ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])];
                       downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
-                    }} className="btn btn-primary" disabled={!seasonSortedByEclectic.length}>Export Eclectic CSV</button>
+                    }} className="btn btn-primary" disabled={Object.values(season).filter(r=>!isTeamLike(r.name)).length===0}>Export Eclectic CSV</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -618,13 +683,15 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {seasonSortedByEclectic.map((r,i)=>(
+                      {Object.values(season).filter(r=>!isTeamLike(r.name))
+                        .sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name))
+                        .map((r,i)=>(
                         <tr key={r.name} className="border-b">
                           <td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal ?? 0}</td>
                           {(r.bestPerHole??Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
                         </tr>
                       ))}
-                      {seasonSortedByEclectic.length===0 && <tr><td colSpan="21" className="py-3 text-neutral-500">No eclectic yet — add an event to season.</td></tr>}
+                      {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="21" className="py-3 text-neutral-500">No eclectic yet — add an event to season.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -640,6 +707,7 @@
                   <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
                     onClick={()=>{
                       const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
+                      const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
                       ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
@@ -660,9 +728,9 @@
                       <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-red-100 text-red-800">Struggle &lt; 1.5</span>.
                     </li>
                     <li><strong>Why it helps:</strong> quick read on where strokes are leaking:
-                      <span className="block ml-4"> If you have low points <em>Par-3</em> avg → focus on tee-shot precision & short-game focus.</span>
-                      <span className="block ml-4"> If you have low points <em>Par-4</em> avg → focus on driving & approach consistency.</span>
-                      <span className="block ml-4"> If you have low points <em>Par-5</em> avg → focus on strategy (lay-up vs go), wedges, 3-putt avoidance.</span>
+                      <span className="block ml-4"> Low <em>Par-3</em> avg → tee-shot precision & short-game focus.</span>
+                      <span className="block ml-4"> Low <em>Par-4</em> avg → driving & approach consistency.</span>
+                      <span className="block ml-4"> Low <em>Par-5</em> avg → strategy (lay-up vs go), wedges, 3-putt avoidance.</span>
                     </li>
                   </ul>
                 </div>
@@ -729,10 +797,10 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Load a CSV from <strong>Past Den Society Golf Games</strong> or import one directly.</li>
-                  <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
+                  <li>Load a shared CSV from <strong>Past Den Society Golf Games</strong> or import one directly.</li>
+                  <li>Click <strong>Add Event → Season</strong> to roll results into season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
-                  <li>Owner Mode (Ctrl+Alt+O) reveals delete controls only.</li>
+                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings and Delete buttons.</li>
                 </ol>
               </section>
 
