@@ -15,6 +15,12 @@
       .owner-on .owner-only{display:block;}
       .mono{font-variant-numeric:tabular-nums}
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
+      .btn{padding:0.5rem 0.75rem;border-radius:0.75rem}
+      .btn-primary{background:#111;color:#fff}
+      .btn-indigo{background:#4f46e5;color:#fff}
+      .btn-emerald{background:#059669;color:#fff}
+      .btn-outline{border:1px solid #d4d4d4}
+      .btn-danger{border:1px solid #fecaca;color:#b91c1c;background:#fff}
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
@@ -31,6 +37,15 @@
       const downloadCSV = (filename, rows) => { const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
       const mask = (s, a=6, b=4)=>!s?'':(s.length<=a+b?s:(s.slice(0,a)+'…'+s.slice(-b)));
       const to1 = x => Math.round((Number(x)||0)*10)/10;
+      const prettyBytes = n => n>=1024*1024 ? (n/1048576).toFixed(1)+' MB' : n>=1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
+
+      // Pretty date for the event chip
+      const prettyDate = (iso) => {
+        try {
+          const d = new Date(iso);
+          return d.toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
+        } catch { return iso || ''; }
+      };
 
       // Split full name -> First/Last for Squabbit
       function splitFirstLast(fullName){
@@ -82,7 +97,7 @@
       async function probe(client){
         try{
           const { error, status } = await client.from('season_standings').select('name').limit(1);
-        if(error) return { ok:false, status, msg:error.message };
+          if(error) return { ok:false, status, msg:error.message };
           return { ok:true, status:200, msg:'Connected' };
         }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
       }
@@ -304,6 +319,38 @@
         return 0; // completely tied
       }
 
+      // ---------- Library (saved CSVs in localStorage) ----------
+      const LIB_KEY = 'den_saved_events_v1';
+      const MAX_SAVED = 16;
+
+      function loadLibrary(){
+        try{
+          const raw = localStorage.getItem(LIB_KEY);
+          const arr = raw ? JSON.parse(raw) : [];
+          if(!Array.isArray(arr)) return [];
+          return arr;
+        }catch{ return []; }
+      }
+      function saveLibrary(items){
+        try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0, MAX_SAVED))); }catch{}
+      }
+      function addToLibraryItems(items, name, date, csv){
+        const id = Date.now()+'_'+Math.random().toString(36).slice(2,8);
+        const size = new Blob([csv]).size;
+        const rec = { id, name: name||'Event', date: date||new Date().toISOString().slice(0,10), csv, size, savedAt: new Date().toISOString() };
+        const next = [rec, ...items].slice(0, MAX_SAVED);
+        saveLibrary(next);
+        return next;
+      }
+      function renameLibraryItem(items, id, newName){
+        const next = items.map(it => it.id===id ? {...it, name:newName} : it);
+        saveLibrary(next); return next;
+      }
+      function deleteLibraryItem(items, id){
+        const next = items.filter(it => it.id!==id);
+        saveLibrary(next); return next;
+      }
+
       // ---------- App ----------
       function App(){
         // Owner Mode (toggle with Ctrl+Alt+O)
@@ -398,7 +445,30 @@
           setDetectedMen(parsed.detectedMen||null);
           setDetectedWomen(parsed.detectedWomen||null);
           if(parsed.detectedMen){ setUseDetected(true); }
+          // try infer event name/date from filename
+          if(file && file.name){
+            const base = file.name.replace(/\.[^.]+$/,'');
+            if(base) setEventName(base);
+          }
         }
+
+        function importManyToLibrary(fileList){
+          const arr = Array.from(fileList||[]);
+          if(!arr.length) return;
+          let items = loadLibrary();
+          for(const f of arr){
+            const reader = new FileReader();
+            reader.onload = (e)=>{
+              const csv = String(e.target.result||'');
+              const name = (f.name||'Event').replace(/\.[^.]+$/,'');
+              const date = new Date().toISOString().slice(0,10);
+              items = addToLibraryItems(items, name, date, csv);
+              setLibrary(items);
+            };
+            reader.readAsText(f);
+          }
+        }
+
         function resetSeasonLocal(){ setSeason({}); }
 
         // ---------- Computed event results with full COUNTBACK ----------
@@ -407,7 +477,6 @@
             idx:i,name:p.name,gender:p.gender,
             startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole
           }));
-          // Base order: total points desc, then back-9 desc
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(b.back9-a.back9));
           if(!base.length) return [];
 
@@ -420,7 +489,7 @@
             groups.push(grpIdxs);
           }
 
-          // Determine winner(s) from TOP group using full countback
+          // Determine winner(s) by countback in the top group
           const topGroupIdxs = groups[0];
           const topGroup = topGroupIdxs.map(i => rows.find(r=>r.idx===i));
           let best = [ topGroup[0] ];
@@ -570,6 +639,78 @@
           downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
         }
 
+        // ---------- Library state & actions ----------
+        const [library, setLibrary] = useState(()=>loadLibrary());
+
+        function saveCurrentEventToLibrary(){
+          if(!players.length) return;
+          // reconstruct a minimal CSV from current computed + per-hole for fidelity
+          // Simpler: keep original text is best — but here we only have parsed objects if user imported via file.
+          // So we just store an "event snapshot CSV" reconstructed from computed + per-hole.
+          // Alternatively, prompt user to re-import using Library → Import To Library (multiple).
+          const name = prompt("Name for this event in Library:", eventName || "Event") || (eventName || "Event");
+          // We can't guarantee original CSV text unless imported via Library; so we store a CSV of our export.
+          const rows = [
+            ["Event", eventName, "Date", dateStr],
+            [],
+            ["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]
+          ];
+          computed.forEach(r => rows.push([r.name, r.gender, Math.round(r.startExact), r.points, r.back9, r.position, r.leaguePoints, r.nextExact.toFixed(1), r.nextPlaying]));
+          const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n");
+          const items = addToLibraryItems(library, name, dateStr, csv);
+          setLibrary(items);
+        }
+
+        function loadLibraryItem(item){
+          // Use our parser, but note this CSV is our event export (not Squabbit detail) – points & back9 are there; per-hole won't be present.
+          const parsed = parseSquabbitCSV(item.csv);
+          // If it's our export (no per-hole), parser will return empty players; so fallback to a minimal loader:
+          if(!parsed.players.length){
+            const lines = item.csv.replace(/\r/g,'').split('\n').map(l=>l.split(',').map(s=>s.replace(/^"|"$/g,'').trim()));
+            const idxHeader = lines.findIndex(r=>r[0]==='Name' && r[1]==='Gender');
+            const players=[];
+            if(idxHeader>=0){
+              for(let i=idxHeader+1;i<lines.length;i++){
+                const r=lines[i];
+                if(!r || !r[0]) break;
+                players.push({
+                  name:r[0], gender:r[1]||'M',
+                  handicap: Number(r[2])||0,
+                  points: Number(r[3])||0,
+                  back9: Number(r[4])||0,
+                  perHole: [] // not available in this export
+                });
+              }
+            }
+            setPlayers(players);
+            setDetectedMen(null); setDetectedWomen(null);
+            setUseDetected(true);
+          }else{
+            setPlayers(parsed.players||[]);
+            setDetectedMen(parsed.detectedMen||null);
+            setDetectedWomen(parsed.detectedWomen||null);
+            setUseDetected(true);
+          }
+          setEventName(item.name||'Event');
+          setDateStr(item.date||new Date().toISOString().slice(0,10));
+          window.scrollTo({top:0, behavior:'smooth'});
+        }
+
+        function promptRename(item){
+          const nn = prompt("Rename event:", item.name||"Event");
+          if(nn && nn.trim()){
+            const next = renameLibraryItem(library, item.id, nn.trim());
+            setLibrary(next);
+          }
+        }
+
+        function removeItem(item){
+          if(confirm(`Delete "${item.name}" from Library?`)){
+            const next = deleteLibraryItem(library, item.id);
+            setLibrary(next);
+          }
+        }
+
         // ---------- UI helpers ----------
         const chip = label => <span className="chip mono">{label}</span>;
 
@@ -619,7 +760,7 @@
                         ]
                       )
                     }
-                    className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-40"
+                    className="btn btn-primary disabled:opacity-40"
                     disabled={!players.length}
                   >
                     Export Event CSV
@@ -627,7 +768,7 @@
 
                   <button
                     onClick={exportSquabbitHandicaps}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white disabled:opacity-40"
+                    className="btn btn-indigo disabled:opacity-40"
                     disabled={!players.length}
                     title="Exports First, Last, Handicap for Squabbit"
                   >
@@ -636,29 +777,61 @@
                 </div>
               </header>
 
-              {/* Settings (Owner only) */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6 owner-only">
-                <h2 className="text-lg font-semibold mb-2">Settings</h2>
-                <div className="grid md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm block mb-1">Supabase URL</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaURL} onChange={e=>setSupaURL(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-sm block mb-1">Supabase anon (public) key</label>
-                    <input className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} />
+              {/* Library (Saved CSVs) */}
+              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-semibold">Saved Events (Library)</h2>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="btn btn-outline cursor-pointer">Import to Library
+                      <input type="file" accept=".csv" multiple className="hidden" onChange={e=>{ if(e.target.files?.length){ importManyToLibrary(e.target.files); e.target.value=''; } }} />
+                    </label>
+                    <button className="btn btn-emerald disabled:opacity-40" disabled={!players.length} onClick={saveCurrentEventToLibrary}>
+                      Save Current Event → Library
+                    </button>
                   </div>
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <button onClick={saveSupa} className="px-3 py-2 rounded-xl bg-emerald-600 text-white">Save & Connect</button>
-                  <button onClick={()=>client && fetchSeasonWith(client)} className="px-3 py-2 rounded-xl border border-neutral-300">Reload Season</button>
+                <p className="text-xs text-neutral-500 mb-3">Stores up to {MAX_SAVED} CSVs locally in this browser. Click <em>Load</em> to view scores & ratings.</p>
+                <div className="overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th style={{width:'40%'}}>Name</th>
+                        <th style={{width:'15%'}}>Date</th>
+                        <th style={{width:'15%'}}>Size</th>
+                        <th style={{width:'30%'}}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {library.length===0 && (
+                        <tr><td colSpan="4" className="py-3 text-neutral-500">No saved events yet.</td></tr>
+                      )}
+                      {library.map(item=>(
+                        <tr key={item.id} className="border-b">
+                          <td className="font-medium">{item.name}</td>
+                          <td>{prettyDate(item.date)}</td>
+                          <td className="mono">{prettyBytes(item.size||item.csv.length)}</td>
+                          <td className="flex flex-wrap gap-2 py-2">
+                            <button className="btn btn-outline" onClick={()=>loadLibraryItem(item)}>Load</button>
+                            <button className="btn btn-outline" onClick={()=>promptRename(item)}>Rename</button>
+                            <button className="btn btn-danger" onClick={()=>removeItem(item)}>Delete</button>
+                            <button className="btn btn-outline" onClick={()=>{
+                              const blob = new Blob([item.csv],{type:"text/csv;charset=utf-8;"});
+                              const a=document.createElement('a');
+                              a.href=URL.createObjectURL(blob);
+                              a.download=`${item.name||'Event'}.csv`;
+                              a.click();
+                            }}>Download</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Toggle Owner Mode with Ctrl+Alt+O.</p>
               </section>
 
-              {/* Import + Event table */}
+              {/* Event Players */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
-                <div className="flex justify-between mb-4">
+                <div className="flex justify-between mb-2">
                   <h2 className="text-lg font-semibold">Event Players</h2>
                   <div className="flex flex-wrap gap-2">
                     <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer">Import Squabbit CSV
@@ -667,6 +840,12 @@
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
                   </div>
                 </div>
+                {/* Event title + date chips */}
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="chip mono">{eventName || "Untitled Event"}</span>
+                  <span className="chip mono">{prettyDate(dateStr)}</span>
+                </div>
+
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -704,8 +883,8 @@
                         ...seasonSortedByPoints.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])
                       ];
                       downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
-                    }} className="px-3 py-2 rounded-2xl bg-black text-white">Export Standings</button>
-                    <button onClick={resetSeasonLocal} className="px-3 py-2 rounded-2xl border border-red-300 text-red-700" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
+                    }} className="btn btn-primary">Export Standings</button>
+                    <button onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -744,7 +923,7 @@
                         ...seasonSortedByEclectic.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])
                       ];
                       downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
-                    }} className="px-3 py-2 rounded-2xl bg-black text-white" disabled={!seasonSortedByEclectic.length}>Export Eclectic CSV</button>
+                    }} className="btn btn-primary" disabled={!seasonSortedByEclectic.length}>Export Eclectic CSV</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -776,7 +955,7 @@
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">Ratings — Par 3 / Par 4 / Par 5 (This Event)</h2>
                   <button
-                    className="px-3 py-2 rounded-2xl bg-black text-white disabled:opacity-40"
+                    className="btn btn-primary disabled:opacity-40"
                     disabled={!ratings.length}
                     onClick={()=>{
                       const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
@@ -883,9 +1062,10 @@
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <h2 className="text-lg font-semibold mb-2">How to Use</h2>
                 <ol className="list-decimal pl-5 space-y-1 text-sm text-neutral-700">
-                  <li>Import a Squabbit CSV. Pars are auto-detected (single Par row with Out/In/Total or two 9-hole rows).</li>
+                  <li>Use <strong>Saved Events (Library)</strong> to keep up to {MAX_SAVED} CSVs in this browser. Click <em>Load</em> to view one.</li>
+                  <li>Or import a Squabbit CSV directly in <strong>Event Players</strong>.</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into Supabase season.</li>
-                  <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap CSV ready for Squabbit.</li>
+                  <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
                   <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings; hidden from others.</li>
                 </ol>
               </section>
