@@ -57,7 +57,7 @@
         return {nextExact:bounded,nextPlaying:nextPlay};
       }
 
-      // ---------- Name filters (expanded to ignore headers like "Players") ----------
+      // ---------- Name filters ----------
       const isTeamLike = name => {
         const s = (name||'').trim();
         return (
@@ -75,12 +75,10 @@
         );
       };
 
-      // Extra sanity: accept only "human-ish" names when auto-creating from totals
       const looksLikePersonName = name => {
         const s = (name||'').trim();
         if (!s) return false;
         if (isTeamLike(s)) return false;
-        // at least one letter, not just digits/punctuation, longer than 2 chars
         if (!/[A-Za-z]/.test(s)) return false;
         if (s.length < 3) return false;
         return true;
@@ -183,7 +181,7 @@
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table under a "Stableford" header (works for 2024 + 2025)
+        // Totals table under "Stableford" (works for 2024 + 2025)
         let totalsStart=-1;
         for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
         const totals={};
@@ -194,11 +192,9 @@
             const b=toNum(row[1]);
             const c=toNum(row[2]);
             if(!a){ if(i>totalsStart+1) break; else continue; }
-            if(!looksLikePersonName(a)) continue;  // << block headers like "Players", "Team Average", etc.
+            if(!looksLikePersonName(a)) continue;
             const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
             if(Number.isFinite(pts)) totals[a]=pts;
-
-            // Only auto-create a player if it truly looks like a person and not already present
             if(!players.some(p=>p.name===a)){
               players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
             }
@@ -259,7 +255,7 @@
       }
 
       // ---------- Countback ----------
-      function compareByCountback(a, b){
+      function compareByCountback(a,b){
         const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
         const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
         const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
@@ -269,28 +265,14 @@
         return 0;
       }
 
-      // ---------- Library (localStorage) ----------
-      const LIB_KEY='den_saved_events_v1';
-      const MAX_SAVED=16;
-      function loadLibrary(){ try{ const raw=localStorage.getItem(LIB_KEY); const arr=raw?JSON.parse(raw):[]; return Array.isArray(arr)?arr:[]; }catch{ return []; } }
-      function saveLibrary(items){ try{ localStorage.setItem(LIB_KEY, JSON.stringify(items.slice(0,MAX_SAVED))); }catch{} }
-      function addToLibraryItems(items, name, date, csv){
-        const id=Date.now()+'_'+Math.random().toString(36).slice(2,8);
-        const size=new Blob([csv]).size;
-        const rec={id,name:name||'Event',date:date||new Date().toISOString().slice(0,10),csv,size,savedAt:new Date().toISOString()};
-        const next=[rec,...items].slice(0,MAX_SAVED); saveLibrary(next); return next;
-      }
-      function renameLibraryItem(items,id,newName){ const next=items.map(it=>it.id===id?{...it,name:newName}:it); saveLibrary(next); return next; }
-      function deleteLibraryItem(items,id){ const next=items.filter(it=>it.id!==id); saveLibrary(next); return next; }
-
       // ---------- App ----------
       function App(){
-        // Owner Mode
+        // Owner Mode toggle (Ctrl+Alt+O / ⌃⌥O)
         const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
         useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
         useEffect(()=>{ const onKey=e=>{ if(e.ctrlKey&&e.altKey&&(e.key==='o'||e.key==='O')){ e.preventDefault(); const n=!ownerMode; setOwnerMode(n); if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode'); } }; window.addEventListener('keydown',onKey); return()=>window.removeEventListener('keydown',onKey); },[ownerMode]);
 
-        // Supabase defaults (hidden by default; visible in Owner Mode)
+        // Supabase defaults (hidden controls unless owner mode)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [supaURL,setSupaURL]=useState(localStorage.getItem('supa_url')||defaultURL);
@@ -390,8 +372,6 @@
         const [season,setSeason]=useState({});
 
         // Pars state
-        const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-        const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
         const [detectedMen,setDetectedMen]=useState(null);
         const [detectedWomen,setDetectedWomen]=useState(null);
         const [useDetected,setUseDetected]=useState(true);
@@ -440,7 +420,6 @@
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          // choose winner(s) among top group by countback (could be multiple if absolutely identical)
           const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
@@ -537,6 +516,7 @@
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
                 <div className="flex-1">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
+                  {/* status text is owner-only now */}
                   <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>Supabase: {statusMsg}</p>
                   <p className="text-xs text-neutral-500 owner-only">Using URL: <code>{localStorage.getItem('supa_url')||''}</code> · Key: <code>{mask(localStorage.getItem('supa_key')||'')}</code></p>
                 </div>
@@ -550,6 +530,7 @@
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Past Den Society Golf Games</h2>
+                  {/* URL/Key/Save strictly owner-only */}
                   <div className="owner-only flex gap-2">
                     <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaURL} onChange={e=>setSupaURL(e.target.value)} placeholder="Supabase URL" />
                     <input className="px-2 py-1 rounded-lg border border-neutral-300 bg-white w-56" value={supaKEY} onChange={e=>setSupaKEY(e.target.value)} placeholder="Anon key" />
@@ -580,7 +561,7 @@
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)importCSV(f);}} />
                     </label>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-                    {/* Export buttons moved here */}
+                    {/* Export buttons remain here */}
                     <button
                       onClick={() =>
                         downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
@@ -707,7 +688,6 @@
                   <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
                     onClick={()=>{
                       const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
-                      const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
                       ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
@@ -800,7 +780,7 @@
                   <li>Load a shared CSV from <strong>Past Den Society Golf Games</strong> or import one directly.</li>
                   <li>Click <strong>Add Event → Season</strong> to roll results into season.</li>
                   <li>Use <strong>Export to Squabbit (Handicaps)</strong> for First/Last/Handicap updates.</li>
-                  <li>Owner Mode (Ctrl+Alt+O) shows Supabase settings and Delete buttons.</li>
+                  <li>Owner Mode (Ctrl+Alt+O / ⌃⌥O) shows Supabase settings and Delete buttons.</li>
                 </ol>
               </section>
 
