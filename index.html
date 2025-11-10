@@ -12,7 +12,7 @@
     <meta property="og:title" content="Den Society — League & Eclectic" />
     <meta property="og:description" content="Event results, ratings, standings and eclectic leaderboard." />
 
-    <!-- Tailwind (simple CDN) -->
+    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- React + Babel + Supabase UMD -->
@@ -75,7 +75,7 @@
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; } // <-- correct backslash
+          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
@@ -179,7 +179,6 @@
 
       // ---------- App ----------
       function App(){
-        // NAV
         const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic
 
         // Supabase
@@ -196,7 +195,6 @@
         const [eventName,setEventName]=useState('Den Society Meeting');
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
-
         const fileInputRef = useRef(null);
 
         useEffect(()=>{ // init supabase + fetch
@@ -315,7 +313,6 @@
           downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows);
         }
 
-        // ---------- UI ----------
         function Header(){
           return (
             <header className="hide-print rounded-2xl p-4 border bg-white">
@@ -331,7 +328,6 @@
         }
 
         function Home(){
-          // Single drop-down list (white items). Import uses hidden file input.
           const [open,setOpen]=useState(true);
           const canAct = computed.length>0;
 
@@ -354,10 +350,9 @@
                   <button className="w-full text-left rounded-xl border bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
                   <button className="w-full text-left rounded-xl border bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
 
-                  <!-- Import CSV -->
                   <button
                     className="w-full text-left rounded-xl border bg-white px-3 py-2"
-                    onClick={()=>{ fileInputRef.current?.click(); }}
+                    onClick={()=>{ fileInputRef.current && fileInputRef.current.click(); }}
                   >Import CSV</button>
                   <input
                     ref={fileInputRef}
@@ -384,7 +379,6 @@
                     disabled={!canAct}
                   >Add Event → Season</button>
 
-                  <!-- Download CSV (bottom, white like others) -->
                   <button
                     className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'bg-white':'bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
                     onClick={exportEventCSV}
