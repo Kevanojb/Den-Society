@@ -270,7 +270,7 @@
               {sharedGroups.map(group=> (
                 <div key={group.year} className="mb-3">
                   <div className="text-xs text-neutral-500 mb-1">{group.year}</div>
-                  <select className="w-full rounded-xl border px-3 py-2 bg-white" onChange={e=>{ const idx=e.target.value; if(idx==='') return; const item=group.events[Number(idx)]; loadShared(item); }} >
+                  <select className="w-full rounded-xl border px-3 py-2 bg-white" onChange={async e=>{ const idx=e.target.value; if(idx==='') return; const item=group.events[Number(idx)]; await loadShared(item); setView('event'); }} >
                     <option value="">Select an event…</option>
                     {group.events.map((item,i)=> (<option key={item.path} value={i}>{item.name}</option>))}
                   </select>
@@ -395,12 +395,52 @@
           );
         }
 
+        function EventScreen(){
+          // shows the actual event players table (positions, points, etc.)
+          return (
+            <section className="rounded-2xl p-4 md:p-6 bg-white border shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold">Event — {eventName || 'Selected Event'}</h2>
+                <div className="flex gap-2">
+                  <button className="btn btn-outline" onClick={()=>setView('past')}>Back</button>
+                  <button className="btn btn-outline" onClick={()=>{ if(!computed.length) return; const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]]; computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])); downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows); }}>Export Event</button>
+                  <button className="btn btn-primary" disabled={!computed.length} onClick={addEventToSeason}>Add Event → Season</button>
+                </div>
+              </div>
+
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="sticky top-0 bg-white z-10">
+                    <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
+                  </thead>
+                  <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
+                    {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-500">Pick an event to see players.</td></tr>)}
+                    {computed.map((r,i)=>(
+                      <tr key={i} className="border-b">
+                        <td>{r.position}</td>
+                        <td className="whitespace-nowrap">{r.name}</td>
+                        <td>{Math.round(r.startExact)}</td>
+                        <td>{r.points}</td>
+                        <td>{r.back9}</td>
+                        <td>{r.leaguePoints}</td>
+                        <td>{r.nextPlaying}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-neutral-500 mt-2">Ties share the highest slot. Winner by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st.</p>
+            </section>
+          );
+        }
+
         return (
           <div className="min-h-screen p-4 sm:p-6">
             <div className="max-w-4xl mx-auto space-y-4">
               <Header />
               {view==='home' && <Home />}
               {view==='past' && <PastEvents />}
+              {view==='event' && <EventScreen />}
               {view==='ratings' && <Ratings />}
               {view==='standings' && <Standings />}
               {view==='eclectic' && <Eclectic />}
