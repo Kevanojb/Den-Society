@@ -73,7 +73,7 @@
 
       // CSV parsing (restored to original logic)
       function splitSmart(raw){
-        const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
+        const d = raw.includes('	') ? '	' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
       function toNum(x){ const v=parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
@@ -117,7 +117,7 @@
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||'\\'===raw){ vals.push(0); continue; }
+          if(raw==='P'||raw==='p'||'\'===raw){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
@@ -125,7 +125,9 @@
         return vals.slice(0,18);
       }
       function parseSquabbitCSV(text){
-        const rows=text.replace(/\r/g,'').split('\n');
+        const rows=text.replace(/
+/g,'').split('
+');
         const lines=rows.map(splitSmart);
         // Optional roster (Name/Hdcp)
         let playerHeaderRow=-1;
@@ -345,7 +347,24 @@
             <section className="hide-print rounded-2xl p-4 bg-white border shadow-sm">
               <h2 className="text-lg font-semibold mb-3">Quick access</h2>
               <div className="space-y-3">
+                <DropdownCard
+                  label="Download CSV"
+                  variant="green"
+                  onClick={()=>{
+                    if(!computed.length){ toast('Load an event first'); return; }
+                    const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
+                    computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]));
+                    downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows);
+                  }}
+                />
                 <DropdownCard label="View Past Golf Events" onClick={()=>setView('past')} />
+                <DropdownCard label="View Player Ratings" onClick={()=>setView('ratings')} />
+                <DropdownCard label="Check Season Standings" onClick={()=>setView('standings')} />
+                <DropdownCard label="Check Eclectic Leaderboard" onClick={()=>setView('eclectic')} />
+              </div>
+            </section>
+          );
+        } />
                 <DropdownCard label="View Player Ratings" onClick={()=>setView('ratings')} />
                 <DropdownCard label="Check Season Standings" onClick={()=>setView('standings')} />
                 <DropdownCard label="Check Eclectic Leaderboard" onClick={()=>setView('eclectic')} />
@@ -354,9 +373,20 @@
           );
         }
 
-        function DropdownCard({label,onClick}){
+        function DropdownCard({label,onClick,variant}){
+          const isGreen = variant==='green';
+          const cls = isGreen
+            ? 'w-full text-left px-4 py-3 rounded-xl border border-squab-700 bg-squab-600 text-white hover:brightness-105'
+            : 'w-full text-left px-4 py-3 rounded-xl border bg-neutral-50 hover:bg-neutral-100';
           return (
-            <button className="w-full text-left px-4 py-3 rounded-xl border bg-neutral-50 hover:bg-neutral-100" onClick={onClick}>
+            <button className={cls} onClick={onClick}>
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{label}</span>
+                <span>▾</span>
+              </div>
+            </button>
+          );
+        }>
               <div className="flex items-center justify-between">
                 <span className="font-medium">{label}</span>
                 <span>▾</span>
