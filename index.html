@@ -4,26 +4,38 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Den Society — League & Eclectic</title>
-    <link rel="icon" href="/favicon.ico">
-    <meta name="theme-color" content="#111827">
-    <meta property="og:title" content="Den Society — League & Eclectic">
-    <meta property="og:description" content="Event results, ratings, and eclectic leaderboard.">
+
+    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Ensure Tailwind uses class-based dark mode on CDN build
       tailwind.config = { darkMode: 'class' };
     </script>
+
+    <!-- React + Babel (CDN) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Supabase -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
+    <!-- Meta / Branding -->
+    <link rel="icon" href="./favicon.ico">
+    <meta name="theme-color" content="#111827">
+    <meta property="og:title" content="Den Society — League & Eclectic">
+    <meta property="og:description" content="Event results, ratings, and eclectic leaderboard.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://kevanojb.github.io/Den-Society/og.png" />
+
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
       .mono{font-variant-numeric:tabular-nums}
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
+
+      /* Buttons */
       .btn{padding:0.5rem 0.75rem;border-radius:0.75rem;transition:all .15s ease;}
       .btn:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-      .btn:focus-visible{outline:none;box-shadow:0 0 0 2px #6366f1,0 0 0 4px #fff} 
+      .btn:focus-visible{outline:none;box-shadow:0 0 0 2px #6366f1,0 0 0 4px #fff}
       .btn-xs{padding:0.25rem 0.5rem;border-radius:0.5rem;font-size:.75rem;line-height:1rem}
       .btn-primary{background:#111;color:#fff}
       .btn-indigo{background:#4f46e5;color:#fff}
@@ -31,30 +43,43 @@
       .btn-outline{border:1px solid #d4d4d4;background:#fff}
       .btn-danger{border:1px solid #fecaca;color:#b91c1c;background:#fff}
 
-      /* Accordion styles */
-      .acc-toggle { width: 100%; background:#fff; color:#0a0a0a; padding: 12px 16px; border-radius: 14px; display:flex; justify-content:space-between; align-items:center; font-size:1rem; border:1px solid #e5e7eb; transition:background .15s ease; }
+      /* Accordion styles (lighter) */
+      .acc-toggle {
+        width: 100%;
+        background:#fff;
+        color:#0a0a0a;
+        padding: 12px 16px;
+        border-radius: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1rem;
+        border: 1px solid #e5e7eb;
+        transition: background .15s ease;
+      }
       .acc-toggle:hover{ background:#f9fafb; }
       .acc-toggle .left { display:flex; align-items:center; gap:10px; }
-      .acc-badge{ font-size:.75rem; padding:2px 8px; border-radius:999px; background:#111827; border:1px solid #374151; }
+      .acc-badge{ font-size:.75rem; padding:2px 8px; border-radius:999px; background:#f3f4f6; border:1px solid #e5e7eb; }
       .acc-help{ font-size:.8rem; opacity:.85; }
       .chev { transition: transform .25s ease; }
       .chev.open { transform: rotate(180deg); }
-
       .acc-body { overflow:hidden; max-height:0; transition:max-height .35s ease; }
-      .acc-body.open { max-height: 5000px; }
+      .acc-body.open { max-height: 5000px; } /* generous for mobile */
+      .acc-actions { background:#fff; border-color:#e5e7eb; }
 
+      /* Past games list */
       .year-block { margin-top:10px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
       .year-title { margin:0 0 8px; font-size:.95rem; font-weight:700; color:#334155; }
       .event-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-      .event-btn { flex:1; background:#fff; padding:10px 12px; border-radius:12px; text-align:left; border:1px solid #e5e7eb; }
+      .event-btn { flex:1; background:#fff; padding:10px 12px; border-radius:12px; text-align:left; border:1px solid #e5e7eb; transition:background .15s ease; }
       .event-btn:hover { background:#f3f4f6; }
       .back-to-past { margin:8px 0 0; padding:8px 12px; background:#e5e7eb; border-radius:10px; }
-
-      /* Actions accordion style variant */
-      .acc-actions { background:#fff; border-color:#e5e7eb; }
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
+    <!-- Screen-reader live region for toasts -->
+    <div id="sr-live" class="sr-only" aria-live="polite"></div>
+
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
@@ -62,14 +87,6 @@
       const { useMemo, useState, useEffect, useRef } = React;
 
       // ---------- Small utils ----------
-      function toast(msg){
-        try{
-          const t=document.createElement('div');
-          t.className='fixed bottom-4 right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50';
-          t.textContent=msg; document.body.appendChild(t);
-          setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);
-        }catch{ /* no-op */ }
-      }
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
       const csvEscape = s => { if (s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"' + str.replace(/"/g,'""') + '"' : str; };
@@ -78,6 +95,17 @@
       const prettyDate = (iso) => { try { const d=new Date(iso); return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});} catch { return iso||''; } };
       function splitFirstLast(fullName){ const raw=(fullName||'').trim().replace(/\s+/g,' '); if(!raw) return {first:'',last:''}; const parts=raw.split(' '); if(parts.length===1) return {first:parts[0],last:''}; const last=parts.pop(); return {first:parts.join(' '), last}; }
 
+      // Toast (with SR announce)
+      function toast(msg){
+        try{
+          const live=document.getElementById('sr-live'); if(live) live.textContent=msg;
+          const t=document.createElement('div');
+          t.className='fixed bottom-4 right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50';
+          t.textContent=msg; document.body.appendChild(t);
+          setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);
+        }catch{ /* no-op */ }
+      }
+
       // ---------- Handicap maths ----------
       function playingCapByGender(g){ return g==="F"?36:28; }
       function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
@@ -85,7 +113,8 @@
       function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
       function computeNewExactHandicap(start,g,pts,b9,w){
         const startPlay=Math.round(start); let exact=start;
-        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} 
+        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
+        else if(pts<=31){ exact+=0.5*(32-pts);}
         if(w) exact-=winnerBonusCut(startPlay);
         const max=playingCapByGender(g);
         const bounded=clamp(exact,0,60);
@@ -119,7 +148,7 @@
         return true;
       };
 
-      // ---------- Supabase (embedded config; no UI controls) ----------
+      // ---------- Supabase helpers ----------
       function normalizeUrl(u){ if(!u) return ''; let s=String(u).trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='https://'+s; try{ const url=new URL(s); return `https://${url.host}`; }catch{ return ''; } }
       function cleanKey(k){ return (k||'').replace(/[^ -~]/g,'').trim(); }
       function makeSupabaseClient(url, key){
@@ -281,11 +310,11 @@
       // ---------- Ratings ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const badgeClass = avg =>
-        avg>=3   ? 'bg-emerald-100 text-emerald-800' :
-        avg>=2.5 ? 'bg-emerald-50  text-emerald-700' :
-        avg>=2   ? 'bg-neutral-100 text-neutral-800' :
-        avg>=1.5 ? 'bg-amber-100  text-amber-800' :
-                   'bg-red-100    text-red-800';
+        avg>=3   ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
+        avg>=2.5 ? 'bg-emerald-50  text-emerald-700 border-emerald-200' :
+        avg>=2   ? 'bg-neutral-100 text-neutral-800 border-neutral-200' :
+        avg>=1.5 ? 'bg-amber-100  text-amber-800 border-amber-200' :
+                   'bg-red-100    text-red-800 border-red-200';
       const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
       const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
 
@@ -314,9 +343,10 @@
       // ---------- App ----------
       function App(){
         const [showRatingsHelp,setShowRatingsHelp]=useState(false);
+
         // Supabase client (embedded)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc"; // consider moving to server if bucket isn't fully public
+        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
@@ -326,6 +356,7 @@
         const [sharedGroups,setSharedGroups]=useState([]);
         const [pastOpen,setPastOpen]=useState(false);
         const [showBackBtn,setShowBackBtn]=useState(false);
+        const [loadingSeason,setLoadingSeason]=useState(true);
 
         const eventPlayersTopRef=useRef(null);
 
@@ -341,7 +372,7 @@
               const res=await probe(c);
               if(cancelled) return;
               setStatusMsg(res.ok?'Connected':('Error '+res.status+': '+res.msg));
-              if(res.ok){ await fetchSeasonWith(c); await refreshShared(c); }
+              if(res.ok){ await fetchSeasonWith(c); /* defer refreshShared until user opens */ }
             }catch(e){ if(!cancelled) setStatusMsg('Error: '+String(e && e.message ? e.message : e)); }
           }
           boot();
@@ -388,15 +419,14 @@
           setUseDetected(true);
           setEventName(item.name);
 
-          // collapse past list + show back button
           setPastOpen(false);
           setShowBackBtn(true);
 
-          // scroll to the top of the Event Players section
           requestAnimationFrame(()=>{
             const el = eventPlayersTopRef.current;
             if(el){ el.scrollIntoView({ behavior:'smooth', block:'start' }); }
           });
+          toast('Event loaded ✓');
         }
 
         async function downloadShared(item){
@@ -407,6 +437,7 @@
           a.href=URL.createObjectURL(r.data);
           a.download=item.file;
           a.click();
+          toast('Downloading CSV…');
         }
 
         // Event + season data
@@ -435,12 +466,13 @@
             setDetectedWomen(parsed.detectedWomen||null);
             if(parsed.detectedMen){ setUseDetected(true); }
             if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
+            toast('CSV imported ✓');
           }catch(e){
             alert("Couldn't read CSV: "+(e && e.message ? e.message : e));
           }
         }
 
-        function resetSeasonLocal(){ setSeason({}); }
+        function resetSeasonLocal(){ setSeason({}); toast('Local season cleared'); }
 
         // Winners via countback (ties after all checks share winners’ cut & 20 pts)
         function compareByCountbackLocal(a,b){ return compareByCountback(a,b); }
@@ -460,7 +492,8 @@
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
             const cmp=compareByCountbackLocal(topGroup[k],best[0]);
-            if(cmp>0) best=[topGroup[k]]; else if(cmp===0) best.push(topGroup[k]);
+            if(cmp>0) best=[topGroup[k]];
+            else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
 
@@ -485,8 +518,9 @@
 
         // Supabase season I/O
         async function fetchSeasonWith(c){
+          setLoadingSeason(true);
           const r = await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(r.error){ setStatusMsg('Error: '+r.error.message); return; }
+          if(r.error){ setStatusMsg('Error: '+r.error.message); setLoadingSeason(false); return; }
           const data=r.data||[];
           const map={};
           for(let i=0;i<data.length;i++){
@@ -506,6 +540,7 @@
             };
           }
           setSeason(map);
+          setLoadingSeason(false);
         }
 
         async function addEventToSeason(){
@@ -588,24 +623,33 @@
         // ---------- UI ----------
         return (
           <div className="min-h-screen p-4 sm:p-6 md:p-8">
-            <div className="max-w-6xl mx-auto space-y-6">
+            <div className="max-w-6xl mx-auto space-y-5 md:space-y-6">
 
               {/* Header */}
-              <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between bg-gradient-to-r from-neutral-50 to-neutral-100 dark:from-neutral-900 dark:to-neutral-800 rounded-2xl p-4 border border-neutral-200 dark:border-neutral-800">
+              <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between bg-gradient-to-r from-neutral-50 to-neutral-100 dark:from-neutral-900 dark:to-neutral-800 rounded-2xl p-5 md:p-6 border border-neutral-200 dark:border-neutral-800">
                 <div className="flex-1">
-                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-xs text-neutral-500">Supabase: {statusMsg}</p>
+                  <h1 className="text-3xl font-semibold tracking-tight">Den Society — League & Eclectic</h1>
+                  <p className="text-xs text-neutral-600">Supabase: {statusMsg}</p>
                 </div>
                 <div className="flex gap-2 items-center w-full md:w-auto md:min-w-[520px]">
-                  <input className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="Event name" />
-                  
+                  <input className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-neutral-300 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="Event name" />
                 </div>
               </header>
 
               {/* Past Games (dropdown) */}
-              <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
+              <section className="bg-white rounded-2xl shadow-sm p-5 md:p-6">
                 <div id="pastEventsTop"></div>
-                <button type="button" className="acc-toggle" id="past-events-button" aria-controls="past-events-panel" aria-expanded={pastOpen ? 'true':'false'} onClick={()=>setPastOpen(v=>!v)}>
+                <button
+                  type="button"
+                  className="acc-toggle"
+                  id="past-events-button"
+                  aria-controls="past-events-panel"
+                  aria-expanded={pastOpen ? 'true':'false'}
+                  onClick={async ()=>{
+                    if(!pastOpen && !shared.length){ await refreshShared(); }
+                    setPastOpen(v=>!v);
+                  }}
+                >
                   <div className="left">
                     <span className="text-base font-semibold">Past Den Society Golf Games</span>
                     <span className="acc-badge">{shared.length} file{shared.length===1?'':'s'}</span>
@@ -616,17 +660,17 @@
 
                 <div id="past-events-panel" role="region" aria-labelledby="past-events-button" className={`acc-body ${pastOpen?'open':''}`}>
                   {sharedGroups.length===0 && <div className="text-sm text-neutral-500 p-2">No shared CSVs yet.</div>}
-                  {sharedGroups.map(group=>
-                    (<div key={group.year} className="year-block">
+                  {sharedGroups.map(group=>(
+                    <div key={group.year} className="year-block">
                       <h4 className="year-title">{group.year}</h4>
-                      {group.events.map(item=>
-                        (<div key={item.path} className="event-row">
-                          <button type="button" className="event-btn" onClick={()=>loadShared(item)}>{item.name}</button>
-                          <button type="button" className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
-                        </div>)
-                      )}
-                    </div>)
-                  )}
+                      {group.events.map(item=>(
+                        <div key={item.path} className="event-row">
+                          <button type="button" className="event-btn" onClick={()=>loadShared(item)}>Load</button>
+                          <button type="button" className="btn btn-xs btn-outline hover:-translate-y-px hover:shadow-sm" onClick={()=>downloadShared(item)}>Download</button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -649,7 +693,7 @@
               )}
 
               {/* Event Players */}
-              <section ref={eventPlayersTopRef} id="eventPlayersSection" className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              <section ref={eventPlayersTopRef} id="eventPlayersSection" className="bg-white rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Event Players</h2>
                 </div>
@@ -668,6 +712,7 @@
                       rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]);
                     });
                     downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`, rows);
+                    toast('Event CSV exported ✓');
                   }}
                   exportSquabbit={()=>{
                     if(!computed.length) return;
@@ -678,6 +723,7 @@
                       rows.push([nm.first,nm.last,h]);
                     });
                     downloadCSV(`DenSociety_SquabbitUpdate_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`, rows);
+                    toast('Squabbit CSV exported ✓');
                   }}
                 />
 
@@ -688,25 +734,32 @@
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead className="sticky top-0 bg-white z-10">
-                      {/* Gender removed; Next PH -> New Handicap */}
-                      <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
+                      <tr className="border-b text-left">
+                        <th scope="col">#</th>
+                        <th scope="col">Name</th>
+                        <th scope="col" className="text-right">Handicap</th>
+                        <th scope="col" className="text-right">Stableford</th>
+                        <th scope="col" className="text-right">Back9</th>
+                        <th scope="col" className="text-right">Pts</th>
+                        <th scope="col" className="text-right">New Handicap</th>
+                      </tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
-                      {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
+                      {computed.length===0 && (<tr className="animate-pulse"><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
-                          <td>{r.position}</td>
-                          <td className="whitespace-nowrap">
+                          <td className="tabular-nums">{r.position}</td>
+                          <th scope="row" className="whitespace-nowrap font-medium max-w-[220px] truncate md:max-w-none">
                             {r.name}
                             {r.isWinner && (
                               <span className="ml-1 align-middle" title="Event winner" aria-label="Event winner" role="img">🏆</span>
                             )}
-                          </td>
-                          <td>{Math.round(r.startExact)}</td>
-                          <td>{r.points}</td>
-                          <td>{r.back9}</td>
-                          <td>{r.leaguePoints}</td>
-                          <td>{r.nextPlaying}</td>
+                          </th>
+                          <td className="text-right tabular-nums">{Math.round(r.startExact)}</td>
+                          <td className="text-right tabular-nums">{r.points}</td>
+                          <td className="text-right tabular-nums">{r.back9}</td>
+                          <td className="text-right tabular-nums">{r.leaguePoints}</td>
+                          <td className="text-right tabular-nums">{r.nextPlaying}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -716,18 +769,21 @@
               </section>
 
               {/* Ratings */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              <section className="bg-white rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">
                     {`Ratings — Par 3 / Par 4 / Par 5 — ${eventName || "This Event"}`}
+                    <span className="text-xs text-neutral-500 hidden sm:inline"> (Par averaging & badge guide)</span>
                   </h2>
                   <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
+                    aria-disabled={!ratings.length}
                     onClick={()=>{
                       const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
                       ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
                       downloadCSV(`DenSociety_EventRatings_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`, rows);
+                      toast('Ratings CSV exported ✓');
                     }}>Export Ratings</button>
                 </div>
 
@@ -735,22 +791,22 @@
                   <table className="min-w-full text-sm">
                     <thead className="sticky top-0 bg-white z-10">
                       <tr className="border-b text-left">
-                        <th>Name</th>
-                        <th className="text-right">Par-3 avg</th><th>Par-3 rating</th>
-                        <th className="text-right">Par-4 avg</th><th>Par-4 rating</th>
-                        <th className="text-right">Par-5 avg</th><th>Par-5 rating</th>
+                        <th scope="col">Name</th>
+                        <th scope="col" className="text-right">Par-3 avg</th><th scope="col">Par-3 rating</th>
+                        <th scope="col" className="text-right">Par-4 avg</th><th scope="col">Par-4 rating</th>
+                        <th scope="col" className="text-right">Par-5 avg</th><th scope="col">Par-5 rating</th>
                       </tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
                       {ratings.map(r=>(
                         <tr key={r.name} className="border-b">
-                          <td className="font-medium max-w-[220px] truncate md:max-w-none">{r.name}</td>
+                          <th scope="row" className="font-medium max-w-[220px] truncate md:max-w-none">{r.name}</th>
                           <td className="text-right tabular-nums">{r.p3.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)} border`}>{ratingLabel(r.p3)}</span></td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium border ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
                           <td className="text-right tabular-nums">{r.p4.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)} border`}>{ratingLabel(r.p4)}</span></td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium border ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
                           <td className="text-right tabular-nums">{r.p5.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)} border`}>{ratingLabel(r.p5)}</span></td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium border ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
                         </tr>
                       ))}
                       {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import or Load a CSV to see ratings.</td></tr>)}
@@ -811,16 +867,21 @@
               </section>
 
               {/* Season standings */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              <section className="bg-white rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
                   <div className="flex gap-2">
-                    <button type="button" onClick={()=>{
-                      const sorted=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
-                      const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"]];
-                      sorted.forEach((r,i)=>rows.push([i+1,r.name,r.events,r.totalPoints,(r.bestEventPoints!=null?r.bestEventPoints:0),(r.bestHolePoints!=null?r.bestHolePoints:0),(r.eclecticTotal!=null?r.eclecticTotal:0)]));
-                      downloadCSV(`DenSociety_Standings.csv`,rows);
-                    }} className="btn btn-primary">Export Standings</button>
+                    <button
+                      type="button"
+                      onClick={()=>{
+                        const sorted=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
+                        const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"]];
+                        sorted.forEach((r,i)=>rows.push([i+1,r.name,r.events,r.totalPoints,(r.bestEventPoints!=null?r.bestEventPoints:0),(r.bestHolePoints!=null?r.bestHolePoints:0),(r.eclecticTotal!=null?r.eclecticTotal:0)]));
+                        downloadCSV(`DenSociety_Standings.csv`,rows);
+                        toast('Standings CSV exported ✓');
+                      }}
+                      className="btn btn-primary"
+                    >Export Standings</button>
                     <button type="button" onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
                   </div>
                 </div>
@@ -828,49 +889,72 @@
                   <table className="min-w-full text-sm">
                     <thead className="sticky top-0 bg-white z-10">
                       <tr className="border-b text-left">
-                        <th>Rank</th><th>Name</th><th>Events</th><th>Total Points</th><th>Best Event</th><th>Best Hole</th><th>Eclectic Total</th>
+                        <th scope="col">Rank</th>
+                        <th scope="col">Name</th>
+                        <th scope="col" className="text-right">Events</th>
+                        <th scope="col" className="text-right">Total Points</th>
+                        <th scope="col" className="text-right">Best Event</th>
+                        <th scope="col" className="text-right">Best Hole</th>
+                        <th scope="col" className="text-right">Eclectic Total</th>
                       </tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
-                      {Object.values(season).filter(r=>!isTeamLike(r.name))
+                      {loadingSeason && (
+                        <tr className="animate-pulse"><td colSpan="7" className="py-3 text-neutral-400">Loading…</td></tr>
+                      )}
+                      {!loadingSeason && Object.values(season).filter(r=>!isTeamLike(r.name))
                         .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name))
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td>
-                          <td>{r.bestEventPoints != null ? r.bestEventPoints : 0}</td><td>{r.bestHolePoints != null ? r.bestHolePoints : 0}</td><td>{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
+                          <td className="tabular-nums">{i+1}</td>
+                          <th scope="row" className="font-medium">{r.name}</th>
+                          <td className="text-right tabular-nums">{r.events}</td>
+                          <td className="text-right tabular-nums">{r.totalPoints}</td>
+                          <td className="text-right tabular-nums">{r.bestEventPoints != null ? r.bestEventPoints : 0}</td>
+                          <td className="text-right tabular-nums">{r.bestHolePoints != null ? r.bestHolePoints : 0}</td>
+                          <td className="text-right tabular-nums">{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
                         </tr>
                       ))}
-                      {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>}
+                      {!loadingSeason && Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && (
+                        <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </section>
 
               {/* Eclectic leaderboard */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              <section className="bg-white rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
                   <div className="flex gap-2">
-                    <button type="button" onClick={()=>{
-                      const list=Object.values(season).filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=>(((b.eclecticTotal!=null?b.eclecticTotal:0))-((a.eclecticTotal!=null?a.eclecticTotal:0)))||a.name.localeCompare(b.name));
-                      const header=["Rank","Name","Eclectic Total"].concat(Array.from({length:18},(_,i)=> 'H'+(i+1)));
-                      const rows=[header];
-                      for(let i=0;i<list.length;i++){
-                        const r=list[i];
-                        const bph=(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0));
-                        rows.push([i+1,r.name,(r.eclecticTotal!=null?r.eclecticTotal:0)].concat(bph));
-                      }
-                      downloadCSV(`DenSociety_Eclectic.csv`,rows);
-                    }} className="btn btn-primary" disabled={Object.values(season).filter(r=>!isTeamLike(r.name)).length===0}>Export Eclectic CSV</button>
+                    <button
+                      type="button"
+                      onClick={()=>{
+                        const list=Object.values(season).filter(r=>!isTeamLike(r.name))
+                          .sort((a,b)=>(((b.eclecticTotal!=null?b.eclecticTotal:0))-((a.eclecticTotal!=null?a.eclecticTotal:0)))||a.name.localeCompare(b.name));
+                        const header=["Rank","Name","Eclectic Total"].concat(Array.from({length:18},(_,i)=> 'H'+(i+1)));
+                        const rows=[header];
+                        for(let i=0;i<list.length;i++){
+                          const r=list[i];
+                          const bph=(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0));
+                          rows.push([i+1,r.name,(r.eclecticTotal!=null?r.eclecticTotal:0)].concat(bph));
+                        }
+                        downloadCSV(`DenSociety_Eclectic.csv`,rows);
+                        toast('Eclectic CSV exported ✓');
+                      }}
+                      className="btn btn-primary"
+                      disabled={Object.values(season).filter(r=>!isTeamLike(r.name)).length===0}
+                      aria-disabled={Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 ? 'true' : 'false'}
+                    >Export Eclectic CSV</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm mono">
                     <thead className="sticky top-0 bg-white z-10">
                       <tr className="border-b text-left">
-                        <th>Rank</th><th>Name</th><th>Eclectic Total</th>
-                        {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
+                        <th scope="col">Rank</th><th scope="col">Name</th><th scope="col" className="text-right">Eclectic Total</th>
+                        {Array.from({length:18},(_,i)=>(<th scope="col" key={i} className="text-right">H{i+1}</th>))}
                       </tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
@@ -878,8 +962,10 @@
                         .sort((a,b)=>(((b.eclecticTotal!=null?b.eclecticTotal:0))-((a.eclecticTotal!=null?a.eclecticTotal:0)))||a.name.localeCompare(b.name))
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
-                          {(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
+                          <td className="tabular-nums">{i+1}</td>
+                          <th scope="row" className="font-medium">{r.name}</th>
+                          <td className="text-right tabular-nums">{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
+                          {(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix} className="text-right tabular-nums">{v}</td>))}
                         </tr>
                       ))}
                       {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="21" className="py-3 text-neutral-500">No eclectic yet — add an event to season.</td></tr>}
@@ -901,7 +987,14 @@
 
         return (
           <div className="mb-4">
-            <button type="button" className="acc-toggle acc-actions" id="event-actions-button" aria-controls="event-actions-panel" aria-expanded={open ? 'true':'false'} onClick={()=>setOpen(v=>!v)}>
+            <button
+              type="button"
+              className="acc-toggle acc-actions"
+              id="event-actions-button"
+              aria-controls="event-actions-panel"
+              aria-expanded={open ? 'true':'false'}
+              onClick={()=>setOpen(v=>!v)}
+            >
               <div className="left">
                 <span className="text-base font-semibold">Event Actions</span>
                 <span className="acc-help hidden sm:inline">Tap to {open?'hide':'show'}</span>
@@ -910,7 +1003,7 @@
             </button>
             <div id="event-actions-panel" role="region" aria-labelledby="event-actions-button" className={`acc-body ${open?'open':''}`}>
               <div className="p-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white cursor-pointer text-center">
+                <label className="px-3 py-2 rounded-xl border border-neutral-300 bg-white hover:bg-neutral-50 cursor-pointer text-center transition-all">
                   Import Squabbit CSV
                   <input
                     ref={fileInputRef}
@@ -918,9 +1011,9 @@
                     onChange={e=>{ const f=e.target.files&&e.target.files[0]; if(f && onImport) onImport(f); e.target.value=''; }}
                   />
                 </label>
-                <button type="button" onClick={onAddEvent} disabled={!canAct} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-                <button type="button" onClick={exportEvent} disabled={!canAct} className="btn btn-primary disabled:opacity-40">Export Event CSV</button>
-                <button type="button" onClick={exportSquabbit} disabled={!canAct} className="btn btn-indigo disabled:opacity-40" title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
+                <button type="button" onClick={onAddEvent} disabled={!canAct} aria-disabled={!canAct} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-px hover:shadow-sm transition-all">Add Event → Season</button>
+                <button type="button" onClick={exportEvent} disabled={!canAct} aria-disabled={!canAct} className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed">Export Event CSV</button>
+                <button type="button" onClick={exportSquabbit} disabled={!canAct} aria-disabled={!canAct} className="btn btn-indigo disabled:opacity-50 disabled:cursor-not-allowed" title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
               </div>
             </div>
           </div>
