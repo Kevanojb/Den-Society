@@ -77,8 +77,7 @@
       function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
       function computeNewExactHandicap(start,g,pts,b9,w){
         const startPlay=Math.round(start); let exact=start;
-        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
-        else if(pts<=31){ exact+=0.5*(32-pts);}
+        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} 
         if(w) exact-=winnerBonusCut(startPlay);
         const max=playingCapByGender(g);
         const bounded=clamp(exact,0,60);
@@ -114,7 +113,7 @@
 
       // ---------- Supabase (embedded config; no UI controls) ----------
       function normalizeUrl(u){ if(!u) return ''; let s=String(u).trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='https://'+s; try{ const url=new URL(s); return `https://${url.host}`; }catch{ return ''; } }
-      function cleanKey(k){ return (k||'').replace(/[^\x20-\x7E]/g,'').trim(); }
+      function cleanKey(k){ return (k||'').replace(/[^ -~]/g,'').trim(); }
       function makeSupabaseClient(url, key){
         const u=normalizeUrl(url), k=cleanKey(key);
         if(!u||!k) return null;
@@ -123,14 +122,11 @@
       }
       async function probe(client){
         try{
-          const { error, status } = await client
-            .from('season_standings')
-            .select('name')
-            .limit(1);
-          if (error) return { ok:false, status, msg:error.message };
+          const res = await client.from('season_standings').select('name').limit(1);
+          if (res.error) return { ok:false, status:res.status, msg:res.error.message };
           return { ok:true, status:200, msg:'Connected' };
         } catch(e){
-          return { ok:false, status:0, msg:String(e?.message||e) };
+          return { ok:false, status:0, msg:String(e && e.message ? e.message : e) };
         }
       }
 
@@ -139,7 +135,7 @@
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
-      function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
+      function toNum(x){ const v=parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
@@ -153,17 +149,19 @@
         }
         const parRows = lines.filter(r => r.some(c => /^pars?$/i.test(String(c).trim())));
         let detected = null;
-        for(const row of parRows){ const cand=scanParRow(row); if(cand){ detected=cand; break; } }
+        for(let i=0;i<parRows.length;i++){ const cand=scanParRow(parRows[i]); if(cand){ detected=cand; break; } }
         if(!detected && parRows.length>=2){
           const nines=[];
-          for(const row of parRows){
+          for(let i=0;i<parRows.length;i++){
+            const row=parRows[i];
             const nums=row.map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
             if(nums.length>=9) nines.push(nums.slice(0,9));
           }
-          if(nines.length>=2) detected=[...nines[0], ...nines[1]].slice(0,18);
+          if(nines.length>=2) detected=[].concat(nines[0], nines[1]).slice(0,18);
         }
         if(!detected){
-          for(const row of lines){
+          for(let i=0;i<lines.length;i++){
+            const row=lines[i];
             const nums=row.map(toNum).map(n=>Math.round(n)).filter(v=>v===3||v===4||v===5);
             if(nums.length>=18){ detected=nums.slice(0,18); break; }
           }
@@ -202,19 +200,20 @@
             if(!name) break;
             if(isTeamLike(name)) continue;
             const hcap=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
+            if(!Number.isNaN(hcap)) players.push({name:name,handicap:hcap,gender:'M'});
           }
         }
 
         // Gender hints
         const genderMap={};
-        for(const row of lines){
+        for(let r=0;r<lines.length;r++){
+          const row=lines[r];
           const nm=(row[0]||'').trim(); if(!nm) continue;
           const tee=String(row[1]||'').toLowerCase();
           if(/women|ladies|red tee/.test(tee)) genderMap[nm]='F';
           else if(genderMap[nm]==null) genderMap[nm]='M';
         }
-        for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
+        for(let p=0;p<players.length;p++){ const pl=players[p]; if(genderMap[pl.name]) pl.gender=genderMap[pl.name]; }
 
         // Totals under a "Stableford" header
         let totalsStart=-1;
@@ -238,14 +237,17 @@
 
         // Per-hole from cards
         const holeData={};
-        for(const p of players){
+        for(let pi=0;pi<players.length;pi++){
+          const p=players[pi];
           for(let i=0;i<lines.length-1;i++){
             if((lines[i][0]||'').trim()===p.name){
               const stRow=lines[i+1]||[];
-              if(!stRow.some(c=>String(c).trim().toLowerCase()==='stableford')) continue;
+              let hasStable=false;
+              for(let j=0;j<stRow.length;j++){ if(String(stRow[j]).trim().toLowerCase()==='stableford'){ hasStable=true; break; } }
+              if(!hasStable) continue;
               const perHole=readStablefordPerHole(stRow);
               const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
-              holeData[p.name]={perHole, back9};
+              holeData[p.name]={perHole:perHole, back9:back9};
               break;
             }
           }
@@ -255,14 +257,16 @@
         return {
           detectedMen: detectedBoth.men,
           detectedWomen: detectedBoth.women,
-          players: players.map(p=>({
-            name:p.name,
-            gender:p.gender,
-            handicap:p.handicap,
-            points: totals[p.name]||0,
-            back9: holeData[p.name]?.back9||0,
-            perHole: holeData[p.name]?.perHole||[]
-          }))
+          players: players.map(function(p){
+            return {
+              name:p.name,
+              gender:p.gender,
+              handicap:p.handicap,
+              points: totals[p.name] || 0,
+              back9: (holeData[p.name] && holeData[p.name].back9) || 0,
+              perHole: (holeData[p.name] && holeData[p.name].perHole) || []
+            };
+          })
         };
       }
 
@@ -303,7 +307,7 @@
       function App(){
         // Supabase client (embedded)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc"; // consider moving to server if bucket isn't fully public
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
@@ -327,43 +331,47 @@
               setClient(c);
               const res=await probe(c);
               if(cancelled) return;
-              setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
+              setStatusMsg(res.ok?'Connected':('Error '+res.status+': '+res.msg));
               if(res.ok){ await fetchSeasonWith(c); await refreshShared(c); }
-            }catch(e){ if(!cancelled) setStatusMsg(`Error: ${String(e?.message||e)}`); }
+            }catch(e){ if(!cancelled) setStatusMsg('Error: '+String(e && e.message ? e.message : e)); }
           }
           boot();
           return()=>{cancelled=true;};
         },[]);
 
-        async function refreshShared(c=client){
+        async function refreshShared(c){
+          c = c || client;
           if(!c) return;
-          const { data, error } = await c.storage.from(BUCKET).list(PREFIX, { limit: 1000, sortBy: { column:'name', order:'asc' }});
-          if(error){ console.warn(error); return; }
-          const items=(data||[])
+          const r = await c.storage.from(BUCKET).list(PREFIX, { limit: 1000, sortBy: { column:'name', order:'asc' }});
+          if(r.error){ console.warn(r.error); return; }
+          const data = r.data || [];
+          const items=data
             .filter(x=>!x.name.startsWith('.') && /\.csv$/i.test(x.name))
-            .map(x=>({ name: x.name.replace(/\.csv$/i,''), file: x.name, path: `${PREFIX}/${x.name}` }));
+            .map(x=>({ name: x.name.replace(/\.csv$/i,''), file: x.name, path: PREFIX+'/'+x.name }));
           setShared(items);
           setSharedGroups(groupByYear(items));
         }
 
         function groupByYear(files){
           const groups={};
-          files.forEach(f=>{
+          for(let i=0;i<files.length;i++){
+            const f=files[i];
             const m = f.name.match(/(20\d{2})/);
             const year = m ? m[1] : 'Unknown';
             if(!groups[year]) groups[year]=[];
             groups[year].push(f);
+          }
+          const years = Object.keys(groups).sort((a,b)=>b.localeCompare(a));
+          return years.map(function(yr){
+            return { year: yr, events: groups[yr].sort((a,b)=>a.name.localeCompare(b.name)) };
           });
-          return Object.keys(groups)
-            .sort((a,b)=>b.localeCompare(a))
-            .map(yr=>({ year: yr, events: groups[yr].sort((a,b)=>a.name.localeCompare(b.name)) }));
         }
 
         async function loadShared(item){
           if(!client) return;
-          const { data, error } = await client.storage.from(BUCKET).download(item.path);
-          if(error){ alert('Download failed: '+error.message); return; }
-          const text = await data.text();
+          const r = await client.storage.from(BUCKET).download(item.path);
+          if(r.error){ alert('Download failed: '+r.error.message); return; }
+          const text = await r.data.text();
           const parsed = parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setDetectedMen(parsed.detectedMen||null);
@@ -384,10 +392,10 @@
 
         async function downloadShared(item){
           if(!client) return;
-          const { data, error } = await client.storage.from(BUCKET).download(item.path);
-          if (error) { alert('Download failed: '+error.message); return; }
+          const r = await client.storage.from(BUCKET).download(item.path);
+          if(r.error){ alert('Download failed: '+r.error.message); return; }
           const a=document.createElement('a');
-          a.href=URL.createObjectURL(data);
+          a.href=URL.createObjectURL(r.data);
           a.download=item.file;
           a.click();
         }
@@ -404,8 +412,8 @@
         const [useDetected,setUseDetected]=useState(true);
         const [parsMenStr,setParsMenStr]=useState(defaultMen.join(','));
         const [parsWomenStr,setParsWomenStr]=useState(defaultWomen.join(','));
-        const manualMen=useMemo(()=>{ try{ const arr=parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultMen; }catch{ return defaultMen; }},[parsMenStr]);
-        const manualWomen=useMemo(()=>{ try{ const arr=parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultWomen; }catch{ return defaultWomen; }},[parsWomenStr]);
+        const manualMen=useMemo(()=>{ try{ const arr=parsMenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultMen; }catch(e){ return defaultMen; }},[parsMenStr]);
+        const manualWomen=useMemo(()=>{ try{ const arr=parsWomenStr.split(',').map(s=>parseInt(s.trim(),10)).filter(Number.isFinite); return arr.length===18?arr:defaultWomen; }catch(e){ return defaultWomen; }},[parsWomenStr]);
         const effectiveMen=useMemo(()=> (useDetected && Array.isArray(detectedMen) && detectedMen.length===18) ? detectedMen : manualMen, [useDetected, detectedMen, manualMen]);
         const effectiveWomen=useMemo(()=> (useDetected && Array.isArray(detectedWomen) && detectedWomen.length===18) ? detectedWomen : manualWomen, [useDetected, detectedWomen, manualWomen]);
 
@@ -419,7 +427,7 @@
             if(parsed.detectedMen){ setUseDetected(true); }
             if(file && file.name){ const base=file.name.replace(/\.[^.]+$/,''); if(base) setEventName(base); }
           }catch(e){
-            alert("Couldn't read CSV: "+(e?.message||e));
+            alert("Couldn't read CSV: "+(e && e.message ? e.message : e));
           }
         }
 
@@ -429,10 +437,11 @@
         function compareByCountbackLocal(a,b){ return compareByCountback(a,b); }
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountbackLocal(a,b)));
+          const base=[].concat(rows).sort((a,b)=>(b.points-a.points)||(compareByCountbackLocal(a,b)));
           if(!base.length) return [];
           const groups=[]; const used=new Set();
-          for(const r of base){
+          for(let gi=0;gi<base.length;gi++){
+            const r=base[gi];
             if(used.has(r.idx)) continue;
             const grpIdxs=base.filter(x=>x.points===r.points).map(x=>x.idx);
             grpIdxs.forEach(id=>used.add(id));
@@ -442,19 +451,23 @@
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
             const cmp=compareByCountbackLocal(topGroup[k],best[0]);
-            if(cmp>0) best=[topGroup[k]];
-            else if(cmp===0) best.push(topGroup[k]);
+            if(cmp>0) best=[topGroup[k]]; else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
 
           let pos=1; const out=[];
-          for(const g of groups){
+          for(let gIdx=0; gIdx<groups.length; gIdx++){
+            const g=groups[gIdx];
             const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
-            for(const i of g){
+            for(let ii=0; ii<g.length; ii++){
+              const i=g[ii];
               const r=rows.find(x=>x.idx===i);
-              const isWinner=winnerIdxSet.has(i) && (g===groups[0]);
+              const isWinner=winnerIdxSet.has(i) && (gIdx===0);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
-              out.push({...r,position:start,leaguePoints:ptsValue,isWinner,...res});
+              out.push({
+                idx:r.idx,name:r.name,gender:r.gender,startExact:r.startExact,points:r.points,back9:r.back9,perHole:r.perHole,
+                position:start,leaguePoints:ptsValue,isWinner:isWinner,nextExact:res.nextExact,nextPlaying:res.nextPlaying
+              });
             }
             pos+=g.length;
           }
@@ -463,47 +476,83 @@
 
         // Supabase season I/O
         async function fetchSeasonWith(c){
-          const {data,error}=await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(error){ setStatusMsg(`Error: ${error.message}`); return; }
+          const r = await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+          if(r.error){ setStatusMsg('Error: '+r.error.message); return; }
+          const data=r.data||[];
           const map={};
-          (data||[]).forEach(r=>{
-            if(isTeamLike(r.name)) return;
-            const bph=Array.isArray(r.best_per_hole)?r.best_per_hole:(typeof r.best_per_hole==='string'?(JSON.parse(r.best_per_hole||'[]')||[]):[]);
-            map[r.name]={ name:r.name, totalPoints:r.total_points||0, events:r.events||0, bestEventPoints:r.best_event_points??0, bestHolePoints:r.best_hole_points??0, eclecticTotal:r.eclectic_total??0, bestPerHole:(bph||[]).map(n=>Number(n)||0) };
-          });
+          for(let i=0;i<data.length;i++){
+            const rec=data[i];
+            if(isTeamLike(rec.name)) continue;
+            let bph = [];
+            if(Array.isArray(rec.best_per_hole)) bph=rec.best_per_hole;
+            else if(typeof rec.best_per_hole==='string'){ try{ bph=JSON.parse(rec.best_per_hole||'[]')||[]; }catch(e){ bph=[]; } }
+            map[rec.name]={
+              name:rec.name,
+              totalPoints: rec.total_points || 0,
+              events: rec.events || 0,
+              bestEventPoints: (rec.best_event_points!=null ? rec.best_event_points : 0),
+              bestHolePoints: (rec.best_hole_points!=null ? rec.best_hole_points : 0),
+              eclecticTotal: (rec.eclectic_total!=null ? rec.eclectic_total : 0),
+              bestPerHole: (bph||[]).map(n=>Number(n)||0)
+            };
+          }
           setSeason(map);
         }
 
         async function addEventToSeason(){
-          const next={...season};
-          for(const r of computed){
+          const next={};
+          const keys=Object.keys(season);
+          for(let i=0;i<keys.length;i++){ next[keys[i]]=season[keys[i]]; }
+
+          for(let i=0;i<computed.length;i++){
+            const r=computed[i];
             if(isTeamLike(r.name)) continue;
             const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
             const eventPerHole=(r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0)));
-            const bestPerHole=Array.from({length:18},(_,i)=>Math.max(prev.bestPerHole[i]||0,eventPerHole[i]||0));
+            const bestPerHole=Array.from({length:18},(_,idx)=>Math.max(prev.bestPerHole[idx]||0,eventPerHole[idx]||0));
             const eclecticTotal=bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
             const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
-            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max(0,...eventPerHole));
-            next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, eclecticTotal, bestPerHole };
+            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max.apply(null,[0].concat(eventPerHole)));
+            next[r.name]={
+              name:r.name,
+              totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0),
+              events:(prev.events||0)+1,
+              bestEventPoints:nextBestEvent,
+              bestHolePoints:nextBestHole,
+              eclecticTotal:eclecticTotal,
+              bestPerHole:bestPerHole
+            };
           }
           setSeason(next);
           if(client){
-            const rows=Object.values(next).filter(r=>!isTeamLike(r.name)).map(r=>({
-              name:r.name, total_points:r.totalPoints|0, events:r.events|0, best_event_points:r.bestEventPoints|0, best_hole_points:r.bestHolePoints|0, eclectic_total:r.eclecticTotal|0, best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0),
-            }));
-            const {error}=await client.from('season_standings').upsert(rows,{onConflict:'name'});
-            if(error) setStatusMsg(`Error: ${error.message}`); else setStatusMsg('Connected');
+            const rows=[];
+            const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
+            for(let i=0;i<vals.length;i++){
+              const r=vals[i];
+              rows.push({
+                name:r.name,
+                total_points:r.totalPoints|0,
+                events:r.events|0,
+                best_event_points:(r.bestEventPoints!=null?r.bestEventPoints:0)|0,
+                best_hole_points:(r.bestHolePoints!=null?r.bestHolePoints:0)|0,
+                eclectic_total:(r.eclecticTotal!=null?r.eclecticTotal:0)|0,
+                best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0),
+              });
+            }
+            const u = await client.from('season_standings').upsert(rows,{onConflict:'name'});
+            if(u.error) setStatusMsg('Error: '+u.error.message); else setStatusMsg('Connected');
           }
         }
 
         // Ratings (this event)
         const ratings=useMemo(()=>{
           const out=[];
-          for(const p of players){
+          for(let i=0;i<players.length;i++){
+            const p=players[i];
             if(isTeamLike(p.name)) continue;
             const pars=(p.gender==='F')?effectiveWomen:effectiveMen;
-            const {p3,p4,p5}=eventParAverages(p.perHole||[],pars);
-            out.push({name:p.name,p3:to1(p3),p4:to1(p4),p5:to1(p5),total:(p3+p4+p5)});
+            const av=eventParAverages(p.perHole||[],pars);
+            out.push({name:p.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:(av.p3+av.p4+av.p5)});
           }
           return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
         },[players,effectiveMen,effectiveWomen]);
@@ -511,7 +560,8 @@
         const fieldAvg=useMemo(()=>{
           let s3m=0,c3m=0,s4m=0,c4m=0,s5m=0,c5m=0;
           let s3f=0,c3f=0,s4f=0,c4f=0,s5f=0,c5f=0;
-          for(const p of players){
+          for(let i=0;i<players.length;i++){
+            const p=players[i];
             if(isTeamLike(p.name)) continue;
             const perHole=p.perHole||[];
             const pars=(p.gender==='F')?effectiveWomen:effectiveMen;
@@ -545,7 +595,7 @@
               {/* Past Games (dropdown) */}
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
                 <div id="pastEventsTop"></div>
-                <button className="acc-toggle" onClick={()=>setPastOpen(v=>!v)}>
+                <button type="button" className="acc-toggle" onClick={()=>setPastOpen(v=>!v)}>
                   <div className="left">
                     <span className="text-base font-semibold">Past Den Society Golf Games</span>
                     <span className="acc-badge">{shared.length} file{shared.length===1?'':'s'}</span>
@@ -556,17 +606,17 @@
 
                 <div className={`acc-body ${pastOpen?'open':''}`}>
                   {sharedGroups.length===0 && <div className="text-sm text-neutral-500 p-2">No shared CSVs yet.</div>}
-                  {sharedGroups.map(group=>(
-                    <div key={group.year} className="year-block">
+                  {sharedGroups.map(group=>
+                    (<div key={group.year} className="year-block">
                       <h4 className="year-title">{group.year}</h4>
-                      {group.events.map(item=>(
-                        <div key={item.path} className="event-row">
-                          <button className="event-btn" onClick={()=>loadShared(item)}>{item.name}</button>
-                          <button className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                      {group.events.map(item=>
+                        (<div key={item.path} className="event-row">
+                          <button type="button" className="event-btn" onClick={()=>loadShared(item)}>{item.name}</button>
+                          <button type="button" className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
+                        </div>)
+                      )}
+                    </div>)
+                  )}
                 </div>
               </section>
 
@@ -574,6 +624,7 @@
               {showBackBtn && (
                 <div className="flex">
                   <button
+                    type="button"
                     className="back-to-past"
                     onClick={()=>{
                       setPastOpen(true);
@@ -599,17 +650,22 @@
                   onAddEvent={addEventToSeason}
                   canAct={!!players.length}
                   exportEvent={()=>{
-                    downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
-                      [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
-                        ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])]);
+                    const rows = [];
+                    rows.push(["Event",eventName,"Date",dateStr]);
+                    rows.push([]);
+                    rows.push(["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]);
+                    computed.forEach(r=>{
+                      rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]);
+                    });
+                    downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`, rows);
                   }}
                   exportSquabbit={()=>{
                     if(!computed.length) return;
                     const rows=[["First","Last","Handicap"]];
                     computed.filter(r=>r && r.name && !isTeamLike(r.name)).forEach(r=>{
-                      const {first,last}=splitFirstLast(r.name);
+                      const nm=splitFirstLast(r.name);
                       const h=Number.isFinite(r.nextPlaying)?r.nextPlaying.toFixed(1):(Number.isFinite(r.startExact)?Number(r.startExact).toFixed(1):"0.0");
-                      rows.push([first,last,h]);
+                      rows.push([nm.first,nm.last,h]);
                     });
                     downloadCSV(`DenSociety_SquabbitUpdate_${dateStr.replace(/-/g,'')}.csv`, rows);
                   }}
@@ -623,16 +679,25 @@
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      {/* Gender hidden; Next PH renamed */}
+                      {/* Gender removed; Next PH -> New Handicap */}
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
                     </thead>
                     <tbody>
                       {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
-                          <td>{r.position}</td><td>{r.name}</td>
-                          <td>{Math.round(r.startExact)}</td><td>{r.points}</td><td>{r.back9}</td>
-                          <td>{r.leaguePoints}</td><td>{r.nextPlaying}</td>
+                          <td>{r.position}</td>
+                          <td className="whitespace-nowrap">
+                            {r.name}
+                            {r.isWinner && (
+                              <span className="ml-1 align-middle" title="Event winner" aria-label="Event winner" role="img">🏆</span>
+                            )}
+                          </td>
+                          <td>{Math.round(r.startExact)}</td>
+                          <td>{r.points}</td>
+                          <td>{r.back9}</td>
+                          <td>{r.leaguePoints}</td>
+                          <td>{r.nextPlaying}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -647,7 +712,7 @@
                   <h2 className="text-lg font-semibold">
                     {`Ratings — Par 3 / Par 4 / Par 5 — ${eventName || "This Event"}`}
                   </h2>
-                  <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
+                  <button type="button" className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
                     onClick={()=>{
                       const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
@@ -657,12 +722,12 @@
                     }}>Export Ratings</button>
                 </div>
 
-                {/* Smaller "How to read this" */}
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[12px] text-neutral-700 mb-3 leading-snug">
-                  <div className="font-medium">How to read this</div>
-                  <ul className="list-disc pl-4 space-y-0.5">
+                {/* Make “How to read this” smaller / tighter */}
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[11px] leading-snug text-neutral-800 mb-3">
+                  <div className="font-medium mb-1">How to read this</div>
+                  <ul className="list-disc pl-5 space-y-0.5">
                     <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
-                    <li>We average per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
+                    <li>We average your per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
                     <li>Colour badges:
                       <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>,
                       <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
@@ -691,8 +756,8 @@
                       </tr>
                     </thead>
                     <tbody>
-                      {ratings.map(r=>(
-                        <tr key={r.name} className="border-b">
+                      {ratings.map(r=>
+                        (<tr key={r.name} className="border-b">
                           <td className="font-medium">{r.name}</td>
                           <td>{r.p3.toFixed(1)}</td>
                           <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
@@ -700,8 +765,8 @@
                           <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
                           <td>{r.p5.toFixed(1)}</td>
                           <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
-                        </tr>
-                      ))}
+                        </tr>)
+                      )}
                       {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import or Load a CSV to see ratings.</td></tr>)}
                     </tbody>
                   </table>
@@ -713,13 +778,13 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
                   <div className="flex gap-2">
-                    <button onClick={()=>{
+                    <button type="button" onClick={()=>{
                       const sorted=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
-                      const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-                        ...sorted.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
+                      const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"]];
+                      sorted.forEach((r,i)=>rows.push([i+1,r.name,r.events,r.totalPoints,(r.bestEventPoints!=null?r.bestEventPoints:0),(r.bestHolePoints!=null?r.bestHolePoints:0),(r.eclecticTotal!=null?r.eclecticTotal:0)]));
                       downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary">Export Standings</button>
-                    <button onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
+                    <button type="button" onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
                   </div>
                 </div>
                 <div className="overflow-auto">
@@ -735,7 +800,7 @@
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
                           <td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td>
-                          <td>{r.bestEventPoints ?? 0}</td><td>{r.bestHolePoints ?? 0}</td><td>{r.eclecticTotal ?? 0}</td>
+                          <td>{r.bestEventPoints != null ? r.bestEventPoints : 0}</td><td>{r.bestHolePoints != null ? r.bestHolePoints : 0}</td><td>{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
                         </tr>
                       ))}
                       {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="7" className="py-3 text-neutral-500">No season data yet.</td></tr>}
@@ -749,11 +814,16 @@
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
                   <div className="flex gap-2">
-                    <button onClick={()=>{
+                    <button type="button" onClick={()=>{
                       const list=Object.values(season).filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name));
-                      const header=["Rank","Name","Eclectic Total",...Array.from({length:18},(_,i)=>`H${i+1}`)];
-                      const rows=[header, ...list.map((r,i)=>[i+1,r.name,r.eclecticTotal??0,...(r.bestPerHole??Array(18).fill(0))])];
+                        .sort((a,b)=>(((b.eclecticTotal!=null?b.eclecticTotal:0))-((a.eclecticTotal!=null?a.eclecticTotal:0)))||a.name.localeCompare(b.name));
+                      const header=["Rank","Name","Eclectic Total"].concat(Array.from({length:18},(_,i)=> 'H'+(i+1)));
+                      const rows=[header];
+                      for(let i=0;i<list.length;i++){
+                        const r=list[i];
+                        const bph=(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0));
+                        rows.push([i+1,r.name,(r.eclecticTotal!=null?r.eclecticTotal:0)].concat(bph));
+                      }
                       downloadCSV(`DenSociety_Eclectic_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary" disabled={Object.values(season).filter(r=>!isTeamLike(r.name)).length===0}>Export Eclectic CSV</button>
                   </div>
@@ -768,11 +838,11 @@
                     </thead>
                     <tbody>
                       {Object.values(season).filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name))
+                        .sort((a,b)=>(((b.eclecticTotal!=null?b.eclecticTotal:0))-((a.eclecticTotal!=null?a.eclecticTotal:0)))||a.name.localeCompare(b.name))
                         .map((r,i)=>(
                         <tr key={r.name} className="border-b">
-                          <td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal ?? 0}</td>
-                          {(r.bestPerHole??Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
+                          <td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal != null ? r.eclecticTotal : 0}</td>
+                          {(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
                         </tr>
                       ))}
                       {Object.values(season).filter(r=>!isTeamLike(r.name)).length===0 && <tr><td colSpan="21" className="py-3 text-neutral-500">No eclectic yet — add an event to season.</td></tr>}
@@ -789,13 +859,12 @@
 
       // Separate component: Event Actions accordion
       function EventActions({ onImport, onAddEvent, canAct, exportEvent, exportSquabbit }){
-        const { useState, useRef } = React;
         const [open,setOpen]=React.useState(false);
         const fileInputRef=React.useRef(null);
 
         return (
           <div className="mb-4">
-            <button className="acc-toggle acc-actions" onClick={()=>setOpen(v=>!v)}>
+            <button type="button" className="acc-toggle acc-actions" onClick={()=>setOpen(v=>!v)}>
               <div className="left">
                 <span className="text-base font-semibold">Event Actions</span>
                 <span className="acc-help hidden sm:inline">Tap to {open?'hide':'show'}</span>
@@ -812,9 +881,9 @@
                     onChange={e=>{ const f=e.target.files&&e.target.files[0]; if(f && onImport) onImport(f); e.target.value=''; }}
                   />
                 </label>
-                <button onClick={onAddEvent} disabled={!canAct} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-                <button onClick={exportEvent} disabled={!canAct} className="btn btn-primary disabled:opacity-40">Export Event CSV</button>
-                <button onClick={exportSquabbit} disabled={!canAct} className="btn btn-indigo disabled:opacity-40" title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
+                <button type="button" onClick={onAddEvent} disabled={!canAct} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
+                <button type="button" onClick={exportEvent} disabled={!canAct} className="btn btn-primary disabled:opacity-40">Export Event CSV</button>
+                <button type="button" onClick={exportSquabbit} disabled={!canAct} className="btn btn-indigo disabled:opacity-40" title="Exports First, Last, Handicap for Squabbit">Export to Squabbit (Handicaps)</button>
               </div>
             </div>
           </div>
