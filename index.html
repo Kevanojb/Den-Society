@@ -2,15 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>Den Society — League & Eclectic (Mobile First)</title>
     <link rel="icon" href="./favicon.ico" />
     <meta name="theme-color" content="#199f57" />
     <meta property="og:title" content="Den Society — League & Eclectic" />
-    <meta property="og:description" content="Event results, ratings, standings and eclectic leaderboard." />
+    <meta
+      property="og:description"
+      content="Event results, ratings, standings and eclectic leaderboard."
+    />
 
-    <!-- Tailwind (CDN) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- IMPORTANT: Tailwind config must come BEFORE the CDN script -->
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -18,14 +23,23 @@
           extend: {
             colors: {
               squab: {
-                50:'#eefbf2',100:'#d8f5e3',200:'#b4eac9',300:'#86dbab',400:'#55c787',
-                500:'#2fb66a',600:'#199f57',700:'#147f47',800:'#12663b',900:'#0f5232'
+                50: '#eefbf2',
+                100: '#d8f5e3',
+                200: '#b4eac9',
+                300: '#86dbab',
+                400: '#55c787',
+                500: '#2fb66a',
+                600: '#199f57',
+                700: '#147f47',
+                800: '#12663b',
+                900: '#0f5232'
               }
             }
           }
         }
-      }
+      };
     </script>
+    <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- React + Babel + Supabase UMD -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -48,7 +62,7 @@
 
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
-      const { useState, useMemo, useRef, useEffect } = React;
+      const { useState, useMemo, useEffect } = React;
 
       // ---------- utilities ----------
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
@@ -58,11 +72,7 @@
       const to1=x=>Math.round((Number(x)||0)*10)/10;
       function toast(msg){ try{ const t=document.createElement('div'); t.className='fixed bottom-4 right-4 left-4 md:left-auto md:right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50 text-center'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);}catch{}}
       function splitFirstLast(fullName){ const raw=(fullName||'').trim().replace(/\s+/g,' '); if(!raw) return {first:'',last:''}; const parts=raw.split(' '); if(parts.length===1) return {first:parts[0],last:''}; const last=parts.pop(); return {first:parts.join(' '), last}; }
-
-      const isTeamLike = name => {
-        const s=(name||'').trim();
-        return /^(team(\s*\d+)?)$/i.test(s) || /^team average$/i.test(s) || /^stableford$/i.test(s) || /^strokeplay$/i.test(s) || /^players?$/i.test(s) || /^round\s*\d+$/i.test(s) || /^(out|in|total|s\.i\.|par)$/i.test(s);
-      };
+      const isTeamLike = name => { const s=(name||'').trim(); return /^(team(\s*\d+)?)$/i.test(s) || /^team average$/i.test(s) || /^stableford$/i.test(s) || /^strokeplay$/i.test(s) || /^players?$/i.test(s) || /^round\s*\d+$/i.test(s) || /^(out|in|total|s\.i\.|par)$/i.test(s); };
       const looksLikePersonName = name => { const s=(name||'').trim(); if(!s) return false; if(isTeamLike(s)) return false; if(!/[A-Za-z]/.test(s)) return false; if(s.length<3) return false; return true; };
 
       // Handicap maths
@@ -72,44 +82,12 @@
       function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
       function computeNewExactHandicap(start,g,pts,b9,w){ const startPlay=Math.round(start); let exact=start; if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} if(w) exact-=winnerBonusCut(startPlay); const max=playingCapByGender(g); const bounded=clamp(exact,0,60); const nextPlay=clamp(Math.round(bounded),0,max); return {nextExact:bounded,nextPlaying:nextPlay}; }
 
-      // ---------- CSV parsing (restored) ----------
+      // ---------- CSV parsing (restored and fixed) ----------
       function splitSmart(raw){
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
       function toNum(x){ const v=parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
-      function detectBothParsFromLines(lines){
-        function scanParRow(row){
-          const pars=[];
-          for(let i=0;i<row.length;i++){
-            const s=String(row[i]||'').trim();
-            if(/^(par|pars|out|in|total)$/i.test(s)) continue;
-            const r=Math.round(toNum(s));
-            if(r===3||r===4||r===5){ pars.push(r); if(pars.length===18) break; }
-          }
-          return pars.length===18?pars:null;
-        }
-        const parRows = lines.filter(r => r.some(c => /^pars?$/i.test(String(c).trim())));
-        let detected = null;
-        for(let i=0;i<parRows.length;i++){ const cand=scanParRow(parRows[i]); if(cand){ detected=cand; break; } }
-        if(!detected && parRows.length>=2){
-          const nines=[];
-          for(let i=0;i<parRows.length;i++){
-            const row=parRows[i];
-            const nums=row.map(toNum).map(n=>Math.round(n)).filter(r=>r===3||r===4||r===5);
-            if(nums.length>=9) nines.push(nums.slice(0,9));
-          }
-          if(nines.length>=2) detected=[].concat(nines[0], nines[1]).slice(0,18);
-        }
-        if(!detected){
-          for(let i=0;i<lines.length;i++){
-            const row=lines[i];
-            const nums=row.map(toNum).map(n=>Math.round(n)).filter(v=>v===3||v===4||v===5);
-            if(nums.length>=18){ detected=nums.slice(0,18); break; }
-          }
-        }
-        return { men: detected||null, women: detected||null };
-      }
       function readStablefordPerHole(row){
         let start=-1;
         for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
@@ -118,7 +96,7 @@
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
+          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; } // <-- fixed backslash
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
@@ -349,10 +327,10 @@
           }
         }
 
-        // ---------- UI components ----------
+        // ---------- UI ----------
         function Header(){
           return (
-            <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white">
+            <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 bg-green-600 text-white">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h1 className="text-xl md:text-2xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
@@ -385,7 +363,7 @@
         function DropdownCard({label,onClick,variant}){
           const isGreen = variant==='green';
           const cls = isGreen
-            ? 'w-full text-left px-4 py-3 rounded-xl border border-squab-700 bg-squab-600 text-white hover:brightness-105'
+            ? 'w-full text-left px-4 py-3 rounded-xl border border-squab-700 bg-squab-600 bg-green-600 text-white hover:brightness-105'
             : 'w-full text-left px-4 py-3 rounded-xl border bg-neutral-50 hover:bg-neutral-100';
           return (
             <button className={cls} onClick={onClick}>
@@ -397,7 +375,6 @@
           );
         }
 
-        // computed exists above, so safe to use here
         function Home(){
           return (
             <section className="hide-print rounded-2xl p-4 bg-white border shadow-sm">
@@ -484,7 +461,6 @@
         }
 
         function Ratings(){
-          // Pars + ratings logic (Par-3/4/5 with badges and explanation)
           const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
           const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
           const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
