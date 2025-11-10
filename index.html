@@ -623,14 +623,13 @@
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      <!-- Gender removed; Next PH renamed -->
-                      <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
+                      <tr className="border-b text-left"><th>#</th><th>Name</th><th>Gender</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>Next PH</th></tr>
                     </thead>
                     <tbody>
-                      {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
+                      {computed.length===0 && (<tr><td colSpan="8" className="py-3 text-neutral-500">Import a Squabbit CSV or Load from Past Games.</td></tr>)}
                       {computed.map((r,i)=>(
                         <tr key={i} className="border-b">
-                          <td>{r.position}</td><td>{r.name}</td>
+                          <td>{r.position}</td><td>{r.name}</td><td>{r.gender}</td>
                           <td>{Math.round(r.startExact)}</td><td>{r.points}</td><td>{r.back9}</td>
                           <td>{r.leaguePoints}</td><td>{r.nextPlaying}</td>
                         </tr>
@@ -657,12 +656,19 @@
                     }}>Export Ratings</button>
                 </div>
 
-                <!-- Slimmer guidance block -->
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[12px] text-neutral-700 mb-3 leading-snug">
-                  <div className="font-medium">How to read this</div>
-                  <div>• 2 Stableford points = net par (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</div>
-                  <div>• We average per-hole Stableford by par type (Par-3, Par-4, Par-5) for this event.</div>
-                  <div>• Colour badges: <span class="font-medium">Excellent ≥ 3.0</span>, <span class="font-medium">Good ≥ 2.5</span>, <span class="font-medium">Solid ≥ 2.0</span>, <span class="font-medium">Needs work ≥ 1.5</span>, <span class="font-medium">Struggle &lt; 1.5</span>.</div>
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800 mb-4">
+                  <div className="font-medium mb-1">How to read this</div>
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
+                    <li>We average your per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
+                    <li>Colour badges:
+                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>,
+                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
+                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>,
+                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>,
+                      <span className="ml-1 rounded px-1.5 py-0.5 text-xs bg-red-100 text-red-800">Struggle &lt; 1.5</span>.
+                    </li>
+                  </ul>
                 </div>
 
                 <div className="mb-3">
