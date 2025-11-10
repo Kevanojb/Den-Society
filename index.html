@@ -385,7 +385,7 @@
         async function downloadShared(item){
           if(!client) return;
           const { data, error } = await client.storage.from(BUCKET).download(item.path);
-          iferror){ alert('Download failed: '+error.message); return; }
+          if (error) { alert('Download failed: '+error.message); return; }
           const a=document.createElement('a');
           a.href=URL.createObjectURL(data);
           a.download=item.file;
@@ -623,7 +623,7 @@
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      <!-- Gender removed; Next PH renamed -->
+                      {/* Gender hidden; Next PH renamed */}
                       <tr className="border-b text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
                     </thead>
                     <tbody>
@@ -657,7 +657,7 @@
                     }}>Export Ratings</button>
                 </div>
 
-                <!-- Smaller "How to read this" -->
+                {/* Smaller "How to read this" */}
                 <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[12px] text-neutral-700 mb-3 leading-snug">
                   <div className="font-medium">How to read this</div>
                   <ul className="list-disc pl-4 space-y-0.5">
