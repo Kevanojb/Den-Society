@@ -160,7 +160,7 @@
           const parsed=parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setEventName(item.name);
-          setView('ratings'); // jump user straight to ratings once an event is picked
+           // jump user straight to ratings once an event is picked
           toast('Event loaded');
         }
 
@@ -194,6 +194,15 @@
           setSeason(map);
         }
 
+        async function addEventToSeason(){
+          const next={ ...season };
+          for(const r of computed){ if(isTeamLike(r.name)) continue; const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0}; const eventPerHole=(r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0))); const bestPerHole=Array.from({length:18},(_,idx)=>Math.max(prev.bestPerHole[idx]||0,eventPerHole[idx]||0)); const eclecticTotal=bestPerHole.reduce((s,v)=>s+(Number(v)||0),0); const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0); const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max.apply(null,[0].concat(eventPerHole))); next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, eclecticTotal, bestPerHole }; }
+          setSeason(next);
+          if(client){ const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name)); for(const r of vals){ rows.push({ name:r.name, total_points:r.totalPoints|0, events:r.events|0, best_event_points:(r.bestEventPoints??0)|0, best_hole_points:(r.bestHolePoints??0)|0, eclectic_total:(r.eclecticTotal??0)|0, best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0) }); }
+            const u = await client.from('season_standings').upsert(rows,{onConflict:'name'}); if(u.error){ toast('Error: '+u.error.message); } else { toast('Event added to season ✓'); }
+          }
+        }
+
         // RENDERERS ------------------------------------------------------------
         function Header(){
           return (
@@ -215,10 +224,10 @@
                 </select>
                 <div className="flex gap-2">
                   <label className="flex-1 text-center rounded-xl border border-white/30 bg-white/10 px-3 py-2 cursor-pointer" title="Import Squabbit CSV">
-                    <input type="file" accept=".csv" className="hidden" onChange={async e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const text=await f.text(); const parsed=parseSquabbitCSV(text); setPlayers(parsed.players||[]); setEventName((f.name||'').replace(/\.[^.]+$/,'')); setView('ratings'); }} />
+                    <input type="file" accept=".csv" className="hidden" onChange={async e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const text=await f.text(); const parsed=parseSquabbitCSV(text); setPlayers(parsed.players||[]); setEventName((f.name||'').replace(/\.[^.]+$/,''));  }} />
                     Import CSV
                   </label>
-                  <button className="btn btn-outline" onClick={()=>{ if(!computed.length) return; const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]]; computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])); downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows); }}>Export Event</button>
+                  <button className="btn btn-outline" onClick={()=>{ if(!computed.length) return; const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]]; computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])); downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows); }}>Export Event</button> <button className="btn btn-primary" disabled={!computed.length} onClick={addEventToSeason}>Add Event → Season</button>
                 </div>
               </div>
             </header>
@@ -272,26 +281,68 @@
         }
 
         function Ratings(){
+          // Pars + ratings logic restored (Par-3/4/5 with badges and explanation)
+          const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+          const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
+          const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
+          const badgeClass = avg => avg>=3?'bg-emerald-100 text-emerald-800':avg>=2.5?'bg-emerald-50 text-emerald-700':avg>=2?'bg-neutral-100 text-neutral-800':avg>=1.5?'bg-amber-100 text-amber-800':'bg-red-100 text-red-800';
+          const eventParAverages=(perHole,pars)=>{ const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}}; for(let i=0;i<Math.min(18,perHole.length);i++){ const pts=Number(perHole[i])||0; const par=Number(pars[i])||4; if(sums[par]){ sums[par].s+=pts; sums[par].c++; } } const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0; return {p3:avg(3),p4:avg(4),p5:avg(5)}; };
+          const effectiveMen=defaultMen, effectiveWomen=defaultWomen;
+
+          const ratings = React.useMemo(()=>{
+            const out=[]; for(const r of computed){ const pars=(r.gender==='F')?effectiveWomen:effectiveMen; const av=eventParAverages(r.perHole||[],pars); out.push({name:r.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:to1(av.p3+av.p4+av.p5)}); }
+            return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
+          },[computed]);
+
+          const fieldAvg = React.useMemo(()=>{ let s3m=0,c3m=0,s4m=0,c4m=0,s5m=0,c5m=0; let s3f=0,c3f=0,s4f=0,c4f=0,s5f=0,c5f=0; for(const r of computed){ const perHole=r.perHole||[]; const pars=(r.gender==='F')?effectiveWomen:effectiveMen; for(let h=0;h<Math.min(18,perHole.length);h++){ const pts=Number(perHole[h])||0, par=Number(pars[h])||4; if(r.gender==='F'){ if(par===3){s3f+=pts;c3f++;} else if(par===4){s4f+=pts;c4f++;} else if(par===5){s5f+=pts;c5f++;} } else { if(par===3){s3m+=pts;c3m++;} else if(par===4){s4m+=pts;c4m++;} else if(par===5){s5m+=pts;c5m++;} } } } const avg=(s,c)=>c?to1(s/c):0; return { men:{p3:avg(s3m,c3m),p4:avg(s4m,c4m),p5:avg(s5m,c5m)}, women:{p3:avg(s3f,c3f),p4:avg(s4f,c4f),p5:avg(s5f,c5f)} };
+          },[computed]);
+
           return (
             <section className="rounded-2xl p-3 md:p-5 bg-white border shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold">Player Ratings — {eventName||'This Event'}</h2>
                 <button className="btn btn-outline" onClick={()=>setView('home')}>Back</button>
               </div>
+
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
-                  <thead><tr className="border-b text-left"><th>Name</th><th>Par-3 avg</th><th>Par-4 avg</th><th>Par-5 avg</th></tr></thead>
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th>Name</th>
+                      <th>Par-3 avg</th><th>Par-3 rating</th>
+                      <th>Par-4 avg</th><th>Par-4 rating</th>
+                      <th>Par-5 avg</th><th>Par-5 rating</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {computed.length===0 && <tr><td colSpan="4" className="py-3 text-neutral-500">Import a Squabbit CSV or choose from Past Events.</td></tr>}
-                    {computed.map(r=>{
-                      // quick derive averages by par type from per-hole vs simple assumption (no per-par split here for brevity)
-                      const p3 = to1((r.perHole||[]).reduce((a,b)=>a+(Number(b)||0),0)/18);
-                      return (
-                        <tr key={r.name} className="border-b"><td className="font-medium">{r.name}{r.isWinner&&<span className="ml-1" title="Event winner">🏆</span>}</td><td>{p3}</td><td>{p3}</td><td>{p3}</td></tr>
-                      );
-                    })}
+                    {ratings.length===0 && (
+                      <tr><td colSpan="7" className="py-3 text-neutral-500">Import a Squabbit CSV or pick one from Past Events to see ratings.</td></tr>
+                    )}
+                    {ratings.map(r=> (
+                      <tr key={r.name} className="border-b">
+                        <td className="font-medium">{r.name}</td>
+                        <td>{r.p3.toFixed(1)}</td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
+                        <td>{r.p4.toFixed(1)}</td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
+                        <td>{r.p5.toFixed(1)}</td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="mt-3">
+                <details className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[11px] leading-snug text-neutral-800">
+                  <summary className="cursor-pointer font-medium">How to read this</summary>
+                  <ul className="list-disc pl-5 space-y-0.5 mt-2">
+                    <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
+                    <li>We average per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>).</li>
+                    <li>Badges: Excellent ≥ 3.0, Good ≥ 2.5, Solid ≥ 2.0, Needs work ≥ 1.5, Struggle &lt; 1.5.</li>
+                    <li>Field benchmark — Men: P3 {fieldAvg.men.p3}, P4 {fieldAvg.men.p4}, P5 {fieldAvg.men.p5}. Women: P3 {fieldAvg.women.p3}, P4 {fieldAvg.women.p4}, P5 {fieldAvg.women.p5}.</li>
+                  </ul>
+                </details>
               </div>
             </section>
           );
