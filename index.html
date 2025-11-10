@@ -4,26 +4,52 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Den Society — League & Eclectic</title>
-    <link rel="icon" href="/favicon.ico">
-    <meta name="theme-color" content="#111827">
-    <meta property="og:title" content="Den Society — League & Eclectic">
-    <meta property="og:description" content="Event results, ratings, and eclectic leaderboard.">
+    <link rel="icon" href="./favicon.ico" />
+    <meta name="theme-color" content="#199f57" />
+    <meta property="og:title" content="Den Society — League & Eclectic" />
+    <meta property="og:description" content="Event results, ratings, and eclectic leaderboard." />
+
+    <!-- Tailwind (CDN for now) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Ensure Tailwind uses class-based dark mode on CDN build
-      tailwind.config = { darkMode: 'class', theme: { extend: { colors: { squab: { 50:'#eefbf2',100:'#d8f5e3',200:'#b4eac9',300:'#86dbab',400:'#55c787',500:'#2fb66a',600:'#199f57',700:'#147f47',800:'#12663b',900:'#0f5232' } } } } };
+      // Tailwind theme extension (Squabbit palette)
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              squab: {
+                50:  '#eefbf2',
+                100: '#d8f5e3',
+                200: '#b4eac9',
+                300: '#86dbab',
+                400: '#55c787',
+                500: '#2fb66a',
+                600: '#199f57',
+                700: '#147f47',
+                800: '#12663b',
+                900: '#0f5232'
+              }
+            }
+          }
+        }
+      };
     </script>
+
+    <!-- React + Babel + Supabase -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
       .mono{font-variant-numeric:tabular-nums}
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
-      .btn{padding:0.5rem 0.75rem;border-radius:0.75rem;transition:all .15s ease;}
+
+      .btn{padding:0.5rem 0.75rem;border-radius:0.75rem;transition:all .15s ease}
       .btn:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-      .btn:focus-visible{outline:none;box-shadow:0 0 0 2px #6366f1,0 0 0 4px #fff} 
+      .btn:focus-visible{outline:none;box-shadow:0 0 0 2px #22c55e,0 0 0 4px #fff}
       .btn-xs{padding:0.25rem 0.5rem;border-radius:0.5rem;font-size:.75rem;line-height:1rem}
       .btn-primary{background:#199f57;color:#fff}
       .btn-indigo{background:#4f46e5;color:#fff}
@@ -32,29 +58,38 @@
       .btn-danger{border:1px solid #fecaca;color:#b91c1c;background:#fff}
 
       /* Accordion styles */
-      .acc-toggle { width: 100%; background:#fff; color:#0a0a0a; padding: 12px 16px; border-radius: 14px; display:flex; justify-content:space-between; align-items:center; font-size:1rem; border:1px solid #e5e7eb; transition:background .15s ease; }
-      .acc-toggle:hover{ background:#f9fafb; }
-      .acc-toggle .left { display:flex; align-items:center; gap:10px; }
-      .acc-badge{ font-size:.75rem; padding:2px 8px; border-radius:999px; background:#eefbf2; border:1px solid #b4eac9; }
-      .acc-help{ font-size:.8rem; opacity:.85; }
-      .chev { transition: transform .25s ease; }
-      .chev.open { transform: rotate(180deg); }
+      .acc-toggle { width:100%; background:#fff; color:#0a0a0a; padding:12px 16px; border-radius:14px; display:flex; justify-content:space-between; align-items:center; font-size:1rem; border:1px solid #e5e7eb; transition:background .15s ease }
+      .acc-toggle:hover{ background:#f9fafb }
+      .acc-toggle .left { display:flex; align-items:center; gap:10px }
+      .acc-badge{ font-size:.75rem; padding:2px 8px; border-radius:999px; background:#eefbf2; border:1px solid #b4eac9 }
+      .acc-help{ font-size:.8rem; opacity:.85 }
+      .chev { transition: transform .25s ease }
+      .chev.open { transform: rotate(180deg) }
 
-      .acc-body { overflow:hidden; max-height:0; transition:max-height .35s ease; }
-      .acc-body.open { max-height: 5000px; }
+      .acc-body { overflow:hidden; max-height:0; transition:max-height .35s ease }
+      .acc-body.open { max-height: 5000px }
 
-      .year-block { margin-top:10px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
-      .year-title { margin:0 0 8px; font-size:.95rem; font-weight:700; color:#334155; }
-      .event-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-      .event-btn { flex:1; background:#fff; padding:10px 12px; border-radius:12px; text-align:left; border:1px solid #e5e7eb; }
-      .event-btn:hover { background:#f3f4f6; }
-      .back-to-past { margin:8px 0 0; padding:8px 12px; background:#e5e7eb; border-radius:10px; }
+      .year-block { margin-top:10px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:10px }
+      .year-title { margin:0 0 8px; font-size:.95rem; font-weight:700; color:#334155 }
+      .event-row { display:flex; align-items:center; gap:8px; margin-bottom:6px }
+      .event-btn { flex:1; background:#fff; padding:10px 12px; border-radius:12px; text-align:left; border:1px solid #e5e7eb }
+      .event-btn:hover { background:#f3f4f6 }
+      .back-to-past { margin:8px 0 0; padding:8px 12px; background:#e5e7eb; border-radius:10px }
 
       /* Actions accordion style variant */
-      .acc-actions { background:#f8fff9; border-color:#86dbab; }
+      .acc-actions { background:#f8fff9; border-color:#86dbab }
+
       /* Mint panel utility */
-  .panel-mint{ background:#eefbf2; border:1px solid #b4eac9; }
-</style>
+      .panel-mint{ background:#eefbf2; border:1px solid #b4eac9 }
+
+      /* Print */
+      @media print {
+        .btn, .acc-toggle, .back-to-past { display:none !important }
+        section { box-shadow:none !important; border:none !important; padding:0 !important }
+        table { font-size:12pt }
+        th, td { padding:4px 6px !important }
+      }
+    </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
@@ -70,7 +105,7 @@
           t.className='fixed bottom-4 right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50';
           t.textContent=msg; document.body.appendChild(t);
           setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);
-        }catch{ /* no-op */ }
+        }catch{}
       }
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
       const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -87,7 +122,8 @@
       function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
       function computeNewExactHandicap(start,g,pts,b9,w){
         const startPlay=Math.round(start); let exact=start;
-        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);} else if(pts<=31){ exact+=0.5*(32-pts);} 
+        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
+        else if(pts<=31){ exact+=0.5*(32-pts);}
         if(w) exact-=winnerBonusCut(startPlay);
         const max=playingCapByGender(g);
         const bounded=clamp(exact,0,60);
@@ -316,9 +352,10 @@
       // ---------- App ----------
       function App(){
         const [showRatingsHelp,setShowRatingsHelp]=useState(false);
+
         // Supabase client (embedded)
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc"; // consider moving to server if bucket isn't fully public
+        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
@@ -390,11 +427,9 @@
           setUseDetected(true);
           setEventName(item.name);
 
-          // collapse past list + show back button
           setPastOpen(false);
           setShowBackBtn(true);
 
-          // scroll to the top of the Event Players section
           requestAnimationFrame(()=>{
             const el = eventPlayersTopRef.current;
             if(el){ el.scrollIntoView({ behavior:'smooth', block:'start' }); }
@@ -462,7 +497,8 @@
           let best=[topGroup[0]];
           for(let k=1;k<topGroup.length;k++){
             const cmp=compareByCountbackLocal(topGroup[k],best[0]);
-            if(cmp>0) best=[topGroup[k]]; else if(cmp===0) best.push(topGroup[k]);
+            if(cmp>0) best=[topGroup[k]];
+            else if(cmp===0) best.push(topGroup[k]);
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
 
@@ -596,11 +632,15 @@
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between rounded-2xl p-5 md:p-6 border border-squab-700 bg-squab-600 text-white">
                 <div className="flex-1">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-xs text-neutral-500">Supabase: {statusMsg}</p>
+                  <p className="text-xs/5 opacity-90">Supabase: {statusMsg}</p>
                 </div>
                 <div className="flex gap-2 items-center w-full md:w-auto md:min-w-[520px]">
-                  <input className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="Event name" />
-                  
+                  <input
+                    className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-white/20 bg-white/10 text-white placeholder-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    value={eventName}
+                    onChange={e=>setEventName(e.target.value)}
+                    placeholder="Event name"
+                  />
                 </div>
               </header>
 
@@ -618,17 +658,17 @@
 
                 <div id="past-events-panel" role="region" aria-labelledby="past-events-button" className={`acc-body ${pastOpen?'open':''}`}>
                   {sharedGroups.length===0 && <div className="text-sm text-neutral-500 p-2">No shared CSVs yet.</div>}
-                  {sharedGroups.map(group=>
-                    (<div key={group.year} className="year-block">
+                  {sharedGroups.map(group=>(
+                    <div key={group.year} className="year-block">
                       <h4 className="year-title">{group.year}</h4>
-                      {group.events.map(item=>
-                        (<div key={item.path} className="event-row">
+                      {group.events.map(item=>(
+                        <div key={item.path} className="event-row">
                           <button type="button" className="event-btn" onClick={()=>loadShared(item)}>{item.name}</button>
                           <button type="button" className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
-                        </div>)
-                      )}
-                    </div>)
-                  )}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -690,7 +730,6 @@
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead className="sticky top-0 bg-white z-10">
-                      {/* Gender removed; Next PH -> New Handicap */}
                       <tr className="border-b border-squab-200 text-left"><th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th></tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
@@ -717,7 +756,7 @@
                 <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner(s) by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st. If still tied, both are winners and both receive the winner’s cut.</p>
               </section>
 
-              {/* Ratings */
+              {/* Ratings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">
@@ -799,7 +838,7 @@
                             <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
                             <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>,
                             <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>,
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-800">Struggle < 1.5</span>.
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-800">Struggle &lt; 1.5</span>.
                           </li>
                         </ul>
                       </div>
@@ -816,7 +855,7 @@
                 </div>
               </section>
 
-{/* Season standings */}
+              {/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
@@ -933,8 +972,15 @@
         );
       }
 
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(<App />);
+      // Mount app (simple guard)
+      try {
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+        console.log('App mounted');
+      } catch (e) {
+        console.error('Mount error:', e);
+        alert('Mount error: ' + e.message);
+      }
     </script>
   </body>
 </html>
