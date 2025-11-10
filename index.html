@@ -34,73 +34,24 @@
         font-size: 1rem;
         border: 2px solid #1f2937;
       }
-      .acc-toggle .left {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .acc-badge{
-        font-size:.75rem;
-        padding:2px 8px;
-        border-radius:999px;
-        background:#111827;
-        border:1px solid #374151;
-      }
-      .acc-help{
-        font-size:.8rem;
-        opacity:.85;
-      }
+      .acc-toggle .left { display:flex; align-items:center; gap:10px; }
+      .acc-badge{ font-size:.75rem; padding:2px 8px; border-radius:999px; background:#111827; border:1px solid #374151; }
+      .acc-help{ font-size:.8rem; opacity:.85; }
       .chev { transition: transform .25s ease; }
       .chev.open { transform: rotate(180deg); }
 
-      .acc-body {
-        overflow: hidden;
-        max-height: 0;
-        transition: max-height .35s ease;
-      }
+      .acc-body { overflow:hidden; max-height:0; transition:max-height .35s ease; }
       .acc-body.open { max-height: 1200px; }
 
-      .year-block {
-        margin-top: 10px;
-        background: #f8fafc;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 10px;
-      }
-      .year-title {
-        margin: 0 0 8px;
-        font-size: .95rem;
-        font-weight: 700;
-        color: #334155;
-      }
-      .event-row {
-        display:flex;
-        align-items:center;
-        gap:8px;
-        margin-bottom:6px;
-      }
-      .event-btn {
-        flex: 1;
-        background: white;
-        padding: 10px 12px;
-        border-radius: 12px;
-        text-align: left;
-        border: 1px solid #e5e7eb;
-      }
-      .event-btn:hover { background: #f3f4f6; }
-
-      .back-to-past {
-        margin: 8px 0 0;
-        padding: 8px 12px;
-        background: #e5e7eb;
-        border-radius: 10px;
-      }
+      .year-block { margin-top:10px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:10px; }
+      .year-title { margin:0 0 8px; font-size:.95rem; font-weight:700; color:#334155; }
+      .event-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+      .event-btn { flex:1; background:#fff; padding:10px 12px; border-radius:12px; text-align:left; border:1px solid #e5e7eb; }
+      .event-btn:hover { background:#f3f4f6; }
+      .back-to-past { margin:8px 0 0; padding:8px 12px; background:#e5e7eb; border-radius:10px; }
 
       /* Actions accordion style variant */
-      .acc-actions {
-        background:#111827;
-        border-color:#334155;
-      }
+      .acc-actions { background:#111827; border-color:#334155; }
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
@@ -170,7 +121,18 @@
         if(!(window.supabase && window.supabase.createClient)) throw new Error('supabase-js SDK did not load');
         return window.supabase.createClient(u, k, { auth:{ persistSession:false }});
       }
-      async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; }
+      async function probe(client){
+        try{
+          const { error, status } = await client
+            .from('season_standings')
+            .select('name')
+            .limit(1);
+          if (error) return { ok:false, status, msg:error.message };
+          return { ok:true, status:200, msg:'Connected' };
+        } catch(e){
+          return { ok:false, status:0, msg:String(e?.message||e) };
+        }
+      }
 
       // ---------- CSV parsing ----------
       function splitSmart(raw){
@@ -216,7 +178,7 @@
         for(let j=start+1;j<row.length && vals.length<18;j++){
           const raw=String(row[j]||'').trim();
           if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
+          if(raw==='P'||raw==='p'||'\\'===raw){ vals.push(0); continue; }
           const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
           if(Number.isFinite(n) && n>=0 && n<=6) vals.push(n);
         }
@@ -463,7 +425,7 @@
 
         function resetSeasonLocal(){ setSeason({}); }
 
-        // Computed event + winners via countback (ties after all checks share winners' cut and 20 pts)
+        // Winners via countback (ties after all checks share winners’ cut & 20 pts)
         function compareByCountbackLocal(a,b){ return compareByCountback(a,b); }
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
@@ -490,7 +452,7 @@
             const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
             for(const i of g){
               const r=rows.find(x=>x.idx===i);
-              const isWinner=winnerIdxSet.has(i) && (g===groups[0]); // multiple winners possible
+              const isWinner=winnerIdxSet.has(i) && (g===groups[0]);
               const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
               out.push({...r,position:start,leaguePoints:ptsValue,isWinner,...res});
             }
@@ -580,7 +542,7 @@
                 </div>
               </header>
 
-              {/* Past Games (big, obvious dropdown) */}
+              {/* Past Games (dropdown) */}
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
                 <div id="pastEventsTop"></div>
                 <button className="acc-toggle" onClick={()=>setPastOpen(v=>!v)}>
@@ -599,9 +561,7 @@
                       <h4 className="year-title">{group.year}</h4>
                       {group.events.map(item=>(
                         <div key={item.path} className="event-row">
-                          <button className="event-btn" onClick={()=>loadShared(item)}>
-                            {item.name}
-                          </button>
+                          <button className="event-btn" onClick={()=>loadShared(item)}>{item.name}</button>
                           <button className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
                         </div>
                       ))}
@@ -746,7 +706,7 @@
                 </div>
               </section>
 
-              {/* Season standings (after current event + ratings) */}
+              {/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
@@ -782,7 +742,7 @@
                 </div>
               </section>
 
-              {/* Eclectic leaderboard (after) */}
+              {/* Eclectic leaderboard */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
@@ -827,8 +787,9 @@
 
       // Separate component: Event Actions accordion
       function EventActions({ onImport, onAddEvent, canAct, exportEvent, exportSquabbit }){
-        const [open,setOpen]=useState(false);
-        const fileInputRef=useRef(null);
+        const { useState, useRef } = React;
+        const [open,setOpen]=React.useState(false);
+        const fileInputRef=React.useRef(null);
 
         return (
           <div className="mb-4">
