@@ -717,72 +717,76 @@
                 <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner(s) by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st. If still tied, both are winners and both receive the winner’s cut.</p>
               </section>
 
-              {/* Ratings */}
+              {/* Ratings */
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-semibold">
                     {`Ratings — Par 3 / Par 4 / Par 5 — ${eventName || "This Event"}`}
                   </h2>
-                  <button className="btn btn-primary disabled:opacity-40" disabled={!ratings.length}
-                    onClick={()=>{
-                      const rows=[["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
+                  <button
+                    className="btn btn-primary disabled:opacity-40"
+                    disabled={!ratings.length}
+                    onClick={() => {
+                      const rows = [["Name","Par-3 avg","Par-3 rating","Par-4 avg","Par-4 rating","Par-5 avg","Par-5 rating"]];
                       rows.push(["FIELD (Men)", fieldAvg.men.p3, ratingLabel(fieldAvg.men.p3), fieldAvg.men.p4, ratingLabel(fieldAvg.men.p4), fieldAvg.men.p5, ratingLabel(fieldAvg.men.p5)]);
                       rows.push(["FIELD (Women)", fieldAvg.women.p3, ratingLabel(fieldAvg.women.p3), fieldAvg.women.p4, ratingLabel(fieldAvg.women.p4), fieldAvg.women.p5, ratingLabel(fieldAvg.women.p5)]);
                       ratings.forEach(r=>rows.push([r.name, r.p3, ratingLabel(r.p3), r.p4, ratingLabel(r.p4), r.p5, ratingLabel(r.p5)]));
-                      downloadCSV(`DenSociety_EventRatings_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`, rows);
-                    }}>Export Ratings</button>
+                      downloadCSV(`DenSociety_EventRatings_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`, rows);
+                    }}
+                  >Export Ratings</button>
                 </div>
 
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="sticky top-0 bg-white z-10">
-                      <tr className=\"border-b border-squab-200 text-left\">
+                    <thead>
+                      <tr className="border-b border-squab-200 text-left">
                         <th>Name</th>
-                        <th className="text-right">Par-3 avg</th><th>Par-3 rating</th>
-                        <th className="text-right">Par-4 avg</th><th>Par-4 rating</th>
-                        <th className="text-right">Par-5 avg</th><th>Par-5 rating</th>
+                        <th>Par-3 avg</th><th>Par-3 rating</th>
+                        <th>Par-4 avg</th><th>Par-4 rating</th>
+                        <th>Par-5 avg</th><th>Par-5 rating</th>
                       </tr>
                     </thead>
-                    <tbody className="[&_tr:nth-child(even)]:bg-neutral-50">
-                      {ratings.map(r=>(
+                    <tbody>
+                      {ratings.map(r => (
                         <tr key={r.name} className="border-b">
-                          <td className="font-medium max-w-[220px] truncate md:max-w-none">{r.name}</td>
-                          <td className="text-right tabular-nums">{r.p3.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)} border`}>{ratingLabel(r.p3)}</span></td>
-                          <td className="text-right tabular-nums">{r.p4.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)} border`}>{ratingLabel(r.p4)}</span></td>
-                          <td className="text-right tabular-nums">{r.p5.toFixed(1)}</td>
-                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)} border`}>{ratingLabel(r.p5)}</span></td>
+                          <td className="font-medium">{r.name}</td>
+                          <td>{r.p3.toFixed(1)}</td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
+                          <td>{r.p4.toFixed(1)}</td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
+                          <td>{r.p5.toFixed(1)}</td>
+                          <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
                         </tr>
                       ))}
-                      {!ratings.length && (<tr><td colSpan="7" className="py-3 text-neutral-500">Import or Load a CSV to see ratings.</td></tr>)}
+                      {!ratings.length && (
+                        <tr><td colSpan="7" className="py-3 text-neutral-500">Import or Load a CSV to see ratings.</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
 
-                {/* EXPLANATION (collapsible) */}
+                {/* Collapsible explanation BELOW the ratings */}
                 <div className="mt-3">
                   <button
                     type="button"
                     className="acc-toggle acc-actions"
                     id="ratings-help-button"
                     aria-controls="ratings-help-panel"
-                    aria-expanded={showRatingsHelp ? 'true':'false'}
-                    onClick={()=>setShowRatingsHelp(v=>!v)}
+                    aria-expanded={showRatingsHelp ? 'true' : 'false'}
+                    onClick={() => setShowRatingsHelp(v=>!v)}
                   >
                     <div className="left">
                       <span className="text-base font-semibold">Explanation</span>
-                      <span className="acc-help hidden sm:inline">Tap to {showRatingsHelp?'hide':'show'}</span>
+                      <span className="acc-help hidden sm:inline">Tap to {showRatingsHelp ? 'hide' : 'show'}</span>
                     </div>
-                    <span className={`chev ${showRatingsHelp?'open':''}`}>▾</span>
+                    <span className={`chev ${showRatingsHelp ? 'open' : ''}`}>▾</span>
                   </button>
 
                   <div
                     id="ratings-help-panel"
                     role="region"
                     aria-labelledby="ratings-help-button"
-                    className={`acc-body ${showRatingsHelp?'open':''}`}
-                    style={{ maxHeight: showRatingsHelp ? '2000px' : 0 }}
+                    className={`acc-body ${showRatingsHelp ? 'open' : ''}`}
                   >
                     <div className="p-3">
                       <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[11px] leading-snug text-neutral-800 mb-3">
@@ -791,11 +795,11 @@
                           <li><strong>2 Stableford points = net par</strong> (3 = net birdie, 4 = net eagle, 1 = net bogey, 0 = worse/pick-up).</li>
                           <li>We average your per-hole Stableford by par type (<strong>Par-3</strong>, <strong>Par-4</strong>, <strong>Par-5</strong>) for this event.</li>
                           <li>Colour badges:
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 border">Excellent ≥ 3.0</span>,
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-50 text-emerald-700 border">Good ≥ 2.5</span>,
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-neutral-100 text-neutral-800 border">Solid ≥ 2.0</span>,
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-amber-100 text-amber-800 border">Needs work ≥ 1.5</span>,
-                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-800 border">Struggle &lt; 1.5</span>.
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-100 text-emerald-800">Excellent ≥ 3.0</span>,
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-emerald-50 text-emerald-700">Good ≥ 2.5</span>,
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-neutral-100 text-neutral-800">Solid ≥ 2.0</span>,
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-amber-100 text-amber-800">Needs work ≥ 1.5</span>,
+                            <span className="ml-1 rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-800">Struggle < 1.5</span>.
                           </li>
                         </ul>
                       </div>
@@ -803,8 +807,8 @@
                       <div className="mb-3">
                         <div className="text-xs text-neutral-600 mb-1">H1–H18 Pars in use:</div>
                         <div className="mono text-sm overflow-auto">
-                          <div className="flex items-center gap-2 mb-1"><span className=\"chip mono bg-squab-50 border-squab-200\">Men</span> <span>{effectiveMen.join(', ')}</span></div>
-                          <div className="flex items-center gap-2"><span className=\"chip mono bg-squab-50 border-squab-200\">Women</span> <span>{effectiveWomen.join(', ')}</span></div>
+                          <div className="flex items-center gap-2 mb-1"><span className="chip mono">Men</span> <span>{effectiveMen.join(', ')}</span></div>
+                          <div className="flex items-center gap-2"><span className="chip mono">Women</span> <span>{effectiveWomen.join(', ')}</span></div>
                         </div>
                       </div>
                     </div>
@@ -812,7 +816,7 @@
                 </div>
               </section>
 
-              {/* Season standings */}
+{/* Season standings */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
