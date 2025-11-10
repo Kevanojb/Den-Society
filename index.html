@@ -11,8 +11,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-      .owner-only{display:none;}
-      .owner-on .owner-only{display:block;}
       .mono{font-variant-numeric:tabular-nums}
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
       .btn{padding:0.5rem 0.75rem;border-radius:0.75rem}
@@ -22,7 +20,61 @@
       .btn-emerald{background:#059669;color:#fff}
       .btn-outline{border:1px solid #d4d4d4;background:#fff}
       .btn-danger{border:1px solid #fecaca;color:#b91c1c;background:#fff}
-      details summary::-webkit-details-marker{display:none}
+
+      /* Past Events dropdown (animated accordion) */
+      .past-toggle {
+        width: 100%;
+        background: #0f172a; /* slate-900-ish */
+        color: #fff;
+        padding: 10px 14px;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1rem;
+      }
+      .past-arrow { transition: transform .25s ease; }
+      .past-arrow.open { transform: rotate(180deg); }
+
+      .past-list {
+        overflow: hidden;
+        max-height: 0;
+        transition: max-height .35s ease;
+      }
+      .past-list.open {
+        max-height: 900px; /* enough for many events */
+      }
+      .year-block {
+        margin-top: 10px;
+        background: #f5f5f4;
+        border: 1px solid #e7e5e4;
+        border-radius: 12px;
+        padding: 10px;
+      }
+      .year-title {
+        margin: 0 0 8px;
+        font-size: .95rem;
+        font-weight: 700;
+        color: #334155;
+      }
+      .event-btn {
+        width: 100%;
+        display: block;
+        background: white;
+        padding: 8px 10px;
+        border-radius: 10px;
+        margin-bottom: 6px;
+        text-align: left;
+        border: 1px solid #e5e7eb;
+      }
+      .event-btn:hover { background: #f8fafc; }
+
+      .back-to-past {
+        margin: 8px 0 0;
+        padding: 8px 12px;
+        background: #e5e7eb;
+        border-radius: 10px;
+      }
     </style>
   </head>
   <body class="bg-neutral-50 text-neutral-900">
@@ -30,7 +82,7 @@
 
     <script type="text/babel" data-presets="react">
       /* global React, ReactDOM, supabase */
-      const { useMemo, useState, useEffect } = React;
+      const { useMemo, useState, useEffect, useRef } = React;
 
       // ---------- Small utils ----------
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
@@ -83,12 +135,14 @@
         return true;
       };
 
-      // ---------- Supabase helpers (hidden config) ----------
-      const SUPABASE_URL = "https://mqknahdfpqxrpgpxqtus.supabase.co";   // hard-coded
-      const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
+      // ---------- Supabase helpers (embedded; no UI for keys) ----------
+      function normalizeUrl(u){ if(!u) return ''; let s=String(u).trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='https://'+s; try{ const url=new URL(s); return `https://${url.host}`; }catch{ return ''; } }
+      function cleanKey(k){ return (k||'').replace(/[^\x20-\x7E]/g,'').trim(); }
       function makeSupabaseClient(url, key){
+        const u=normalizeUrl(url), k=cleanKey(key);
+        if(!u||!k) return null;
         if(!(window.supabase && window.supabase.createClient)) throw new Error('supabase-js SDK did not load');
-        return window.supabase.createClient(url, key, { auth:{ persistSession:false }});
+        return window.supabase.createClient(u, k, { auth:{ persistSession:false }});
       }
       async function probe(client){ try{ const { error, status } = await client.from('season_standings').select('name').limit(1); if(error) return { ok:false, status, msg:error.message }; return { ok:true, status:200, msg:'Connected' }; }catch(e){ return { ok:false, status:0, msg:String(e?.message||e) }; } }
 
@@ -98,7 +152,6 @@
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
       function toNum(x){ const v=parseFloat(String(x ?? '').replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
-
       function detectBothParsFromLines(lines){
         function scanParRow(row){
           const pars=[];
@@ -129,7 +182,6 @@
         }
         return { men: detected||null, women: detected||null };
       }
-
       function readStablefordPerHole(row){
         let start=-1;
         for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
@@ -145,14 +197,12 @@
         while(vals.length<18) vals.push(0);
         return vals.slice(0,18);
       }
-
       function parseSquabbitCSV(text){
         const rows=text.replace(/\r/g,'').split('\n');
         const lines=rows.map(splitSmart);
-
         const detectedBoth=detectBothParsFromLines(lines);
 
-        // Optional 2025 roster table (Name/Hdcp)
+        // Optional 2025 roster (Name/Hdcp)
         let playerHeaderRow=-1;
         for(let i=0;i<lines.length;i++){
           if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
@@ -168,7 +218,7 @@
           }
         }
 
-        // Gender hints from tee text
+        // Gender hints
         const genderMap={};
         for(const row of lines){
           const nm=(row[0]||'').trim(); if(!nm) continue;
@@ -178,7 +228,7 @@
         }
         for(const p of players){ if(genderMap[p.name]) p.gender=genderMap[p.name]; }
 
-        // Totals table under a "Stableford" header (works for 2024 + 2025)
+        // Totals under a "Stableford" header (works 2024+2025)
         let totalsStart=-1;
         for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
         const totals={};
@@ -192,11 +242,13 @@
             if(!looksLikePersonName(a)) continue;
             const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
             if(Number.isFinite(pts)) totals[a]=pts;
-            if(!players.some(p=>p.name===a)){ players.push({name:a,handicap:0,gender:(genderMap[a]||'M')}); }
+            if(!players.some(p=>p.name===a)){
+              players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
+            }
           }
         }
 
-        // Per-hole retrieval from detailed cards
+        // Per-hole from cards
         const holeData={};
         for(const p of players){
           for(let i=0;i<lines.length-1;i++){
@@ -226,7 +278,7 @@
         };
       }
 
-      // ---------- Ratings helpers ----------
+      // ---------- Ratings ----------
       const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
       const badgeClass = avg =>
         avg>=3   ? 'bg-emerald-100 text-emerald-800' :
@@ -234,7 +286,6 @@
         avg>=2   ? 'bg-neutral-100 text-neutral-800' :
         avg>=1.5 ? 'bg-amber-100  text-amber-800' :
                    'bg-red-100    text-red-800';
-
       const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
       const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
 
@@ -262,47 +313,34 @@
 
       // ---------- App ----------
       function App(){
-        // Owner Mode (⌘+⌥+O on Mac / Ctrl+Alt+O on Windows)
-        const [ownerMode,setOwnerMode]=useState(sessionStorage.getItem('den_owner_mode')==='1');
-        useEffect(()=>{ document.documentElement.classList.toggle('owner-on', ownerMode); },[ownerMode]);
-        useEffect(()=>{
-          const onKey=e=>{
-            const mac = /(Mac|iPhone|iPad)/i.test(navigator.platform);
-            const invoke = (mac && e.metaKey && e.altKey) || (!mac && e.ctrlKey && e.altKey);
-            if(invoke && (e.key==='o'||e.key==='O')){
-              e.preventDefault();
-              const n=!ownerMode;
-              setOwnerMode(n);
-              if(n) sessionStorage.setItem('den_owner_mode','1'); else sessionStorage.removeItem('den_owner_mode');
-            }
-          };
-          window.addEventListener('keydown',onKey);
-          return()=>window.removeEventListener('keydown',onKey);
-        },[ownerMode]);
-
-        // Supabase client (hidden config, but always connected)
+        // Supabase (embedded; no on-page controls)
+        const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
+        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [client,setClient]=useState(null);
         const [statusMsg,setStatusMsg]=useState('Not connected');
 
-        // Shared events (Supabase Storage)
         const BUCKET='den-events';
         const PREFIX='events';
-        const [shared,setShared]=useState([]); // [{name, file, path}]
-        const [pastOpen,setPastOpen]=useState(false); // dropdown default CLOSED
+        const [shared,setShared]=useState([]); // [{name,file,path}]
+        const [sharedGroups,setSharedGroups]=useState([]); // [{year, events:[...]}]
+        const [pastOpen,setPastOpen]=useState(false);
+        const [showBackBtn,setShowBackBtn]=useState(false);
+
+        const eventPlayersTopRef=useRef(null);
 
         useEffect(()=>{
           let cancelled=false;
           async function boot(){
             try{
-              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,600); return; }
-              const c=makeSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,500); return; }
+              const c=makeSupabaseClient(defaultURL, defaultKEY);
+              if(!c){ setStatusMsg('Invalid Supabase config'); return; }
               if(cancelled) return;
               setClient(c);
               const res=await probe(c);
               if(cancelled) return;
               setStatusMsg(res.ok?'Connected':`Error ${res.status}: ${res.msg}`);
-              if(res.ok) await fetchSeasonWith(c);
-              if(res.ok) await refreshShared(c);
+              if(res.ok){ await fetchSeasonWith(c); await refreshShared(c); }
             }catch(e){ if(!cancelled) setStatusMsg(`Error: ${String(e?.message||e)}`); }
           }
           boot();
@@ -317,6 +355,21 @@
             .filter(x=>!x.name.startsWith('.') && /\.csv$/i.test(x.name))
             .map(x=>({ name: x.name.replace(/\.csv$/i,''), file: x.name, path: `${PREFIX}/${x.name}` }));
           setShared(items);
+          setSharedGroups(groupByYear(items));
+        }
+
+        // Group past games by year (from filename)
+        function groupByYear(files){
+          const groups={};
+          files.forEach(f=>{
+            const m = f.name.match(/(20\d{2})/);
+            const year = m ? m[1] : 'Unknown';
+            if(!groups[year]) groups[year]=[];
+            groups[year].push(f);
+          });
+          return Object.keys(groups)
+            .sort((a,b)=>b.localeCompare(a))
+            .map(yr=>({ year: yr, events: groups[yr].sort((a,b)=>a.name.localeCompare(b.name)) }));
         }
 
         async function loadShared(item){
@@ -330,7 +383,16 @@
           setDetectedWomen(parsed.detectedWomen||null);
           setUseDetected(true);
           setEventName(item.name);
-          window.scrollTo({top:0,behavior:'smooth'});
+
+          // collapse past list and show back button
+          setPastOpen(false);
+          setShowBackBtn(true);
+
+          // scroll to Event Players table top
+          requestAnimationFrame(()=>{
+            const el = eventPlayersTopRef.current;
+            if(el){ el.scrollIntoView({ behavior:'smooth', block:'start' }); }
+          });
         }
 
         async function downloadShared(item){
@@ -341,14 +403,6 @@
           a.href=URL.createObjectURL(data);
           a.download=item.file;
           a.click();
-        }
-
-        async function deleteShared(item){
-          if(!client) return;
-          if(!confirm(`Delete "${item.file}" from shared events?`)) return;
-          const { error } = await client.storage.from(BUCKET).remove([item.path]);
-          if(error){ alert('Delete failed: '+error.message); return; }
-          await refreshShared();
         }
 
         // Event + season data
@@ -384,75 +438,43 @@
 
         function resetSeasonLocal(){ setSeason({}); }
 
-        // Winner logic: countback selects winner(s). If multiple after full countback, all co-winners get 20 and winner cuts.
-        function compareByCountback(a,b){
-          const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
-          const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
-          const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
-          const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
-          const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
-          for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
-          return 0;
+        // Computed event with countback winner(s)
+        function compareByCountbackLocal(a,b){
+          return compareByCountback(a,b);
         }
-
         const computed=useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          if(!rows.length) return [];
-
-          // group by raw points (desc)
-          const byPts = {};
-          rows.forEach(r => { (byPts[r.points] ||= []).push(r); });
-          const pointBands = Object.keys(byPts).map(n=>Number(n)).sort((a,b)=>b-a);
-
-          // Determine winners in top band by full countback
-          const topBand = byPts[pointBands[0]];
-          let winners=[topBand[0]];
-          for(let k=1;k<topBand.length;k++){
-            const cmp=compareByCountback(topBand[k], winners[0]);
-            if(cmp>0){ winners=[topBand[k]]; }
-            else if(cmp===0){ winners.push(topBand[k]); }
+          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountbackLocal(a,b)));
+          if(!base.length) return [];
+          const groups=[]; const used=new Set();
+          for(const r of base){
+            if(used.has(r.idx)) continue;
+            const grpIdxs=base.filter(x=>x.points===r.points).map(x=>x.idx);
+            grpIdxs.forEach(id=>used.add(id));
+            groups.push(grpIdxs);
           }
-          const winnerIdxSet=new Set(winners.map(r=>r.idx));
-
-          // Assign positions & league points:
-          // - Winners (all tied after full countback) => position 1, league 20, winnerCut=true
-          // - Remaining players in top band (who lost on countback) => position after winners (i.e., 1+numWinners), share that slot's points value
-          // - Subsequent bands share position slots as usual (highest available slot)
-          const out=[];
-          let nextPosition = 1;
-
-          // 1) Winners
-          const winPts = POINTS_TABLE[nextPosition-1] || 0; // 20
-          winners.forEach(r=>{
-            const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,true);
-            out.push({...r, position: 1, leaguePoints: winPts, isWinner: true, ...res});
-          });
-          const consumedSlots = winners.length;
-          nextPosition += consumedSlots;
-
-          // 2) Remaining in top band (lost on countback)
-          const losers = topBand.filter(r=>!winnerIdxSet.has(r.idx));
-          if(losers.length){
-            const ptsValue = POINTS_TABLE[nextPosition-1] || 0;
-            losers.forEach(r=>{
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,false);
-              out.push({...r, position: nextPosition, leaguePoints: ptsValue, isWinner:false, ...res});
-            });
-            nextPosition += losers.length;
+          // determine winner(s) in top group via countback; if still tied, both winners
+          const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
+          let best=[topGroup[0]];
+          for(let k=1;k<topGroup.length;k++){
+            const cmp=compareByCountbackLocal(topGroup[k],best[0]);
+            if(cmp>0) best=[topGroup[k]];
+            else if(cmp===0) best.push(topGroup[k]);
           }
+          const winnerIdxSet=new Set(best.map(r=>r.idx));
 
-          // 3) Subsequent point bands
-          for(let bi=1; bi<pointBands.length; bi++){
-            const band = byPts[pointBands[bi]];
-            const ptsValue = POINTS_TABLE[nextPosition-1] || 0;
-            band.forEach(r=>{
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,false);
-              out.push({...r, position: nextPosition, leaguePoints: ptsValue, isWinner:false, ...res});
-            });
-            nextPosition += band.length;
+          let pos=1; const out=[];
+          for(const g of groups){
+            const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
+            for(const i of g){
+              const r=rows.find(x=>x.idx===i);
+              const isWinner=winnerIdxSet.has(i) && (g===groups[0]);
+              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
+              out.push({...r,position:start,leaguePoints:ptsValue,isWinner,...res});
+            }
+            pos+=g.length;
           }
-
-          return out.sort((a,b)=>a.position-b.position || b.points-a.points);
+          return out.sort((a,b)=>a.position-b.position);
         },[players]);
 
         // Supabase season I/O
@@ -521,14 +543,14 @@
 
         // ---------- UI ----------
         return (
-          <div className={"min-h-screen p-4 sm:p-6 md:p-8 " + (ownerMode ? "owner-on" : "")}>
+          <div className="min-h-screen p-4 sm:p-6 md:p-8">
             <div className="max-w-6xl mx-auto space-y-6">
 
               {/* Header */}
               <header className="flex flex-col md:flex-row md:items-end gap-3 justify-between">
                 <div className="flex-1">
                   <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-sm owner-only" style={{color: statusMsg.startsWith('Connected') ? '#059669' : '#dc2626'}}>Supabase: {statusMsg}</p>
+                  <p className="text-xs text-neutral-500">Supabase: {statusMsg}</p>
                 </div>
                 <div className="flex gap-2 items-center w-full md:w-auto md:min-w-[520px]">
                   <input className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-neutral-300 bg-white" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="Event name" />
@@ -536,31 +558,51 @@
                 </div>
               </header>
 
-              {/* Past Den Society Golf Games — dropdown (default closed) */}
+              {/* Past Games (dropdown) */}
               <section className="bg-white rounded-2xl shadow-sm p-3 md:p-4">
-                <details open={pastOpen} onToggle={e=>setPastOpen(e.target.open)}>
-                  <summary className="cursor-pointer flex items-center justify-between select-none">
-                    <span className="text-lg font-semibold">Past Den Society Golf Games</span>
-                    <span className="text-sm text-neutral-500">{pastOpen ? 'Hide' : 'Show'}</span>
-                  </summary>
-                  <div className="mt-3 space-y-1">
-                    {shared.length===0 && <div className="text-sm text-neutral-500">No shared CSVs yet.</div>}
-                    {shared.map(item=>(
-                      <div key={item.path} className="flex items-center justify-between border border-neutral-200 rounded-xl px-3 py-2">
-                        <div className="truncate pr-3">{item.name}</div>
-                        <div className="flex gap-2">
-                          <button className="btn btn-xs btn-outline" onClick={()=>loadShared(item)}>Load</button>
+                <div id="pastEventsTop"></div>
+                <button className="past-toggle" onClick={()=>setPastOpen(v=>!v)}>
+                  <span>Past Den Society Golf Games</span>
+                  <span className={`past-arrow ${pastOpen?'open':''}`}>▾</span>
+                </button>
+
+                <div className={`past-list ${pastOpen?'open':''}`}>
+                  {sharedGroups.length===0 && <div className="text-sm text-neutral-500 p-2">No shared CSVs yet.</div>}
+                  {sharedGroups.map(group=>(
+                    <div key={group.year} className="year-block">
+                      <h4 className="year-title">{group.year}</h4>
+                      {group.events.map(item=>(
+                        <div key={item.path} className="flex items-center justify-between gap-2 mb-1">
+                          <button className="event-btn" onClick={()=>loadShared(item)}>
+                            {item.name}
+                          </button>
                           <button className="btn btn-xs btn-outline" onClick={()=>downloadShared(item)}>Download</button>
-                          <button className="btn btn-xs btn-danger owner-only" onClick={()=>deleteShared(item)}>Delete</button>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </section>
 
-              {/* Event Players (with export buttons here) */}
-              <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
+              {/* Back to Past Events (appears after loading) */}
+              {showBackBtn && (
+                <div className="flex">
+                  <button
+                    className="back-to-past"
+                    onClick={()=>{
+                      setPastOpen(true);
+                      const p = document.getElementById('pastEventsTop');
+                      if(p){ p.scrollIntoView({ behavior:'smooth', block:'start' }); }
+                      setShowBackBtn(false);
+                    }}
+                  >
+                    ← Back to Past Events
+                  </button>
+                </div>
+              )}
+
+              {/* Event Players */}
+              <section ref={eventPlayersTopRef} id="eventPlayersSection" className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-2">
                   <h2 className="text-lg font-semibold">Event Players</h2>
                   <div className="flex flex-wrap gap-2">
@@ -568,14 +610,12 @@
                       <input type="file" accept=".csv" className="hidden" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)importCSV(f);}} />
                     </label>
                     <button onClick={addEventToSeason} disabled={!players.length} className="px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:opacity-40">Add Event → Season</button>
-
                     <button
                       onClick={() =>
                         downloadCSV(`DenSociety_${dateStr.replace(/-/g,'')}.csv`,
                           [["Event",eventName,"Date",dateStr],[],["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"],
                             ...computed.map(r=>[r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying])])}
                       className="btn btn-primary disabled:opacity-40" disabled={!players.length}>Export Event CSV</button>
-
                     <button onClick={()=>{
                       if(!computed.length) return;
                       const rows=[["First","Last","Handicap"]];
@@ -609,7 +649,7 @@
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Winner(s) decided by full countback. If still tied, all co-winners get 20 league points and the winner’s handicap cut. Other ties share the highest available position slot.</p>
+                <p className="text-xs text-neutral-500 mt-2">Ties share the highest available slot. Winner(s) by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st. If still tied, both are winners and both receive the winner’s cut.</p>
               </section>
 
               {/* Ratings */}
@@ -678,16 +718,15 @@
                 </div>
               </section>
 
-              {/* Season standings (bottom) */}
+              {/* Season standings (after current event + ratings) */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Season Standings</h2>
                   <div className="flex gap-2">
                     <button onClick={()=>{
-                      const list=Object.values(season).filter(r=>!isTeamLike(r.name))
-                        .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
+                      const sorted=Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
                       const rows=[["Rank","Name","Events","Total Points","Best Event","Best Hole","Eclectic Total"],
-                        ...list.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
+                        ...sorted.map((r,i)=>[i+1,r.name,r.events,r.totalPoints,r.bestEventPoints??0,r.bestHolePoints??0,r.eclecticTotal??0])];
                       downloadCSV(`DenSociety_Standings_${dateStr.replace(/-/g,'')}.csv`,rows);
                     }} className="btn btn-primary">Export Standings</button>
                     <button onClick={resetSeasonLocal} className="btn btn-danger" title="Clears local season table only (does not touch Supabase)">Reset Season (local)</button>
@@ -715,7 +754,7 @@
                 </div>
               </section>
 
-              {/* Eclectic leaderboard (bottom) */}
+              {/* Eclectic leaderboard (after) */}
               <section className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                 <div className="flex justify-between mb-4">
                   <h2 className="text-lg font-semibold">Eclectic Leaderboard</h2>
