@@ -15,7 +15,6 @@
       content="Event results, ratings, standings and eclectic leaderboard."
     />
 
-    <!-- Tailwind (Theme first, then CDN) -->
     <script>
       tailwind = window.tailwind || {};
       tailwind.config = {
@@ -33,11 +32,11 @@
                 600: "#199f57",
                 700: "#147f47",
                 800: "#12663b",
-                900: "#0f5232",
-              },
-            },
-          },
-        },
+                900: "#0f5232"
+              }
+            }
+          }
+        }
       };
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -54,7 +53,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
-    <!-- Lightweight QR generator for the in-app Help page -->
+    <!-- QR for in-app Help -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <style>
@@ -212,7 +211,6 @@
       }
       function Help(){
         useEffect(()=>{
-          // Build QR for site
           const holder = document.getElementById("help-qr");
           if(holder && holder.childNodes.length===0){
             new QRCode(holder, {
@@ -357,7 +355,6 @@
       // ---------- App ----------
       function App(){
         const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic | help
-        // Supabase
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [client,setClient] = useState(null);
@@ -370,7 +367,6 @@
 
         const [eventName,setEventName]=useState('Den Society Meeting');
         const [players,setPlayers]=useState([]);
-        theSeasonInit:
         const [season,setSeason]=useState({});
         const fileInputRef = useRef(null);
 
@@ -549,11 +545,11 @@
                   <button className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700" onClick={resetSeasonStandings}>Reset Season Standings</button>
                   <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={exportEventCSV} disabled={!canAct}>Download CSV</button>
 
-                  {/* New: link out to the full standalone help page */}
+                  {/* Link to full standalone Help page */}
                   <a href="./help.html" className="w-full block text-left rounded-xl border border-squab-300 bg-white px-3 py-2" target="_blank" rel="noopener">
                     Help / How it works (full page)
                   </a>
-                  {/* Keep in-app help too */}
+                  {/* In-app Help view */}
                   <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('help')}>Help / How it works (in-app)</button>
                 </div>
               </div>
