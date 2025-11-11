@@ -1,0 +1,257 @@
+<<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Den Society — Help & Guide</title>
+    <meta name="theme-color" content="#199f57" />
+    <link rel="icon" href="./favicon.ico" />
+
+    <!-- Tailwind (Squabbit palette) -->
+    <script>
+      tailwind = window.tailwind || {};
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              squab: {
+                50:"#eefbf2",100:"#d8f5e3",200:"#b4eac9",300:"#86dbab",400:"#55c787",
+                500:"#2fb66a",600:"#199f57",700:"#147f47",800:"#12663b",900:"#0f5232"
+              }
+            }
+          }
+        }
+      };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QR fallback (only used if PNG missing) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <style>
+      .section-bar { background: linear-gradient(90deg,#199f57 0%, #86dbab 100%); }
+      .card { box-shadow: 0 8px 24px rgba(16, 24, 40, 0.06); }
+      .acc-body { overflow:hidden; max-height:0; transition:max-height .35s ease; }
+      .acc-body.open { max-height: 4000px; }
+    </style>
+  </head>
+  <body class="min-h-full bg-neutral-50 text-neutral-900">
+    <main class="max-w-4xl mx-auto p-4 sm:p-6 md:p-8 space-y-6">
+      <!-- Header -->
+      <header class="card rounded-2xl border border-squab-300 bg-white p-5 sm:p-6">
+        <div class="flex items-center gap-3">
+          <img src="https://squabbitgolf.com/assets/icon_transparent.png" alt="Squabbit" class="w-12 h-12" />
+          <div>
+            <h1 class="text-2xl font-bold tracking-tight text-squab-900">Den Society — Help & Guide</h1>
+            <p class="text-sm text-neutral-600">Updated for the 8-item Menu, handicap logic, ratings, CSVs, and Geek appendix.</p>
+          </div>
+        </div>
+      </header>
+
+      <!-- Section bar -->
+      <div class="section-bar rounded-xl h-1.5"></div>
+
+      <!-- Intro -->
+      <section class="panel-mint rounded-2xl border border-squab-200 p-4 sm:p-5">
+        <p class="text-sm text-neutral-800">
+          This page explains how the site works and how to read everything you see: events, ratings, season standings, eclectic, CSVs, and the full handicap rules.
+          Tap a section to expand.
+        </p>
+      </section>
+
+      <!-- Help Sections -->
+      <section class="space-y-3">
+        <!-- Reusable heading with SVG tick -->
+        <template id="tick-template">
+          <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" aria-hidden="true">
+            <circle cx="12" cy="12" r="11" fill="#eefbf2" stroke="#199f57" />
+            <path d="M6 12.5l4 4 8-9" fill="none" stroke="#199f57" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </template>
+
+        <!-- Accordion container -->
+        <div id="help-root" class="space-y-3"></div>
+      </section>
+
+      <!-- QR -->
+      <section class="card rounded-2xl border border-squab-300 bg-white p-5 sm:p-6 flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold text-squab-900">Open the Den Society app</h3>
+          <p class="text-sm text-neutral-700">Scan the QR code to visit the live site.</p>
+          <a href="./" class="text-sm text-squab-700 underline">https://kevanojb.github.io/Den-Society/</a>
+        </div>
+        <div class="p-2 rounded border border-squab-300 bg-white">
+          <!-- If PNG exists, show it. Else we’ll inject a generated QR -->
+          <img id="qr-img" src="./assets/den_society_qr.png" alt="QR code" class="w-32 h-32 hidden" />
+          <div id="qr-gen" class="w-32 h-32"></div>
+        </div>
+      </section>
+
+      <footer class="text-xs text-neutral-500 text-center pb-8">
+        © Den Society — Help page • Styled in Squabbit greens. <a href="./index.html" class="text-squab-700 underline">Back to app</a>
+      </footer>
+    </main>
+
+    <script>
+      // Accordion builder
+      function createAccordion(title, html) {
+        const wrap = document.createElement('div');
+        wrap.className = 'card rounded-2xl border border-squab-300 bg-white';
+
+        const btn = document.createElement('button');
+        btn.className = 'w-full flex items-center justify-between px-4 py-3 text-left';
+        btn.setAttribute('aria-expanded','false');
+
+        const left = document.createElement('div');
+        left.className = 'flex items-center gap-2';
+
+        const tickTpl = document.getElementById('tick-template');
+        left.appendChild(tickTpl.content.cloneNode(true));
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'font-semibold';
+        titleEl.textContent = title;
+
+        left.appendChild(titleEl);
+        const chevron = document.createElement('span');
+        chevron.textContent = '▾';
+        chevron.className = 'transition-transform';
+
+        btn.appendChild(left);
+        btn.appendChild(chevron);
+
+        const body = document.createElement('div');
+        body.className = 'acc-body px-4 pb-4';
+        body.innerHTML = html;
+
+        btn.addEventListener('click', ()=>{
+          const open = body.classList.toggle('open');
+          btn.setAttribute('aria-expanded', open?'true':'false');
+          chevron.classList.toggle('rotate-180', open);
+        });
+
+        wrap.appendChild(btn);
+        wrap.appendChild(body);
+        return wrap;
+      }
+
+      const root = document.getElementById('help-root');
+      const sections = [
+        ['✅ What the System Does', `
+          <ul class="list-disc pl-6 space-y-1">
+            <li>Load &amp; view past events</li>
+            <li>Calculate points, handicaps, season results</li>
+            <li>Show player ratings with colour badges</li>
+            <li>Maintain eclectic leaderboard</li>
+            <li>Produce season standings</li>
+            <li>Export or import CSV event files</li>
+            <li>Members can analyse their own Squabbit rounds</li>
+          </ul>
+        `],
+        ['✅ Home Menu (8 Items)', `
+          <ol class="list-decimal pl-6 space-y-1">
+            <li>View Past Golf Events</li>
+            <li>View Player Ratings</li>
+            <li>Check Season Standings</li>
+            <li>Check Eclectic Leaderboard</li>
+            <li>Import CSV</li>
+            <li>Add Event → Season <span class="text-[11px] text-neutral-500">(Admin only)</span></li>
+            <li>Reset Season Standings <span class="text-[11px] text-neutral-500">(Admin only)</span></li>
+            <li>Download CSV</li>
+          </ol>
+        `],
+        ['✅ View Past Golf Events', `
+          Loads events from Supabase (grouped by year). Choose one to make it the <b>Current Event</b>.
+          Once loaded, Ratings / Standings / Eclectic / Export are available.
+        `],
+        ['✅ View Player Ratings', `
+          Works only when an event is loaded. If not, the app prompts you to import or load one and returns to Menu.<br/><br/>
+          <div class="font-medium mb-1">Colour badges</div>
+          <div class="grid sm:grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
+            <div><span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-800">Excellent</span> — Average ≥ 3.0</div>
+            <div><span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700">Good</span> — Average ≥ 2.5</div>
+            <div><span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-800">Solid</span> — Average ≥ 2.0</div>
+            <div><span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-amber-100 text-amber-800">Needs work</span> — Average ≥ 1.5</div>
+            <div><span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-red-100 text-red-800">Struggle</span> — Average &lt; 1.5</div>
+          </div>
+          <p class="mt-2 text-neutral-700">Badges show where players gain/lose strokes vs the field — great for targeted practice.</p>
+        `],
+        ['✅ Season Standings', `
+          Shows Total points, Events played, Best event, Best hole score, Eclectic total.
+          Updates only when an admin adds an event to the season.
+        `],
+        ['✅ Eclectic Leaderboard', `
+          Tracks a player’s <b>best Stableford for each hole</b> across all season events.
+          Example: 2 points on H7 in Event 1, 3 points in Event 2 → Eclectic H7 = 3.
+        `],
+        ['✅ Import CSV', `
+          Import Squabbit or other event CSVs for analysis. Imported events <b>do not</b> affect the season until an admin adds them.
+        `],
+        ['✅ Add Event → Season (Admin)', `
+          You’ll be asked “Are you admin?” If Yes, the Current Event updates Season totals, Eclectic, Best event & Best hole, and league points.
+          If No, you’re returned to Menu.
+        `],
+        ['✅ Reset Season Standings (Admin)', `
+          Clears season totals and the eclectic leaderboard. Does <b>not</b> delete Supabase-stored event CSVs (safe reset for new season).
+        `],
+        ['✅ Calculations — Stableford, Countback, Handicaps', `
+          <div class="font-medium">Stableford</div>
+          Read directly from the Squabbit CSV.<br/><br/>
+          <div class="font-medium">Countback</div>
+          Applied <b>only</b> to the top-score tie. Others share league points equally.<br/>
+          <span class="text-[13px]">Order: Back 9 → Last 6 → Last 3 → 18 → 17 → … → 1. Still tied? Joint winners (all get winner’s cut & 20 pts).</span><br/><br/>
+          <div class="font-medium">Handicap Bands (cuts & winners)</div>
+          <div class="overflow-auto">
+            <table class="min-w-[520px] text-[13px] mt-1 border border-squab-300 rounded">
+              <thead class="bg-squab-100">
+                <tr class="text-left">
+                  <th class="px-2 py-1">Band (Exact)</th>
+                  <th class="px-2 py-1">Cut / point over 34</th>
+                  <th class="px-2 py-1">Winner bonus cut</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="[&>*]:px-2 [&>*]:py-1 border-t"><td>0–9</td><td>0.5</td><td>1.0</td></tr>
+                <tr class="[&>*]:px-2 [&>*]:py-1 border-t"><td>10–18</td><td>1.0</td><td>2.0</td></tr>
+                <tr class="[&>*]:px-2 [&>*]:py-1 border-t"><td>19–28</td><td>1.0</td><td>2.5</td></tr>
+                <tr class="[&>*]:px-2 [&>*]:py-1 border-t"><td>29–36</td><td>1.5</td><td>3.0</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="text-[13px] mt-1"><b>Increases:</b> ≤31 points → +0.5 per point below 32. <b>Gender caps:</b> Men max playing 28; Women max playing 36.</p>
+          <p class="text-[13px]"><b>New handicap:</b> Start exact → apply cut/increase → clamp → round to playing (respect caps).</p>
+          <div class="font-medium mt-2">Examples</div>
+          <ul class="list-disc pl-6 text-[13px]">
+            <li>Exact 7.4, score 38 &amp; winner → 4 over 34 → 4×0.5=2.0 &amp; +1.0 winner cut → 7.4 − 3.0 = <b>4.4</b> → playing 4.</li>
+            <li>Exact 22.1, score 30 → 2 below 32 → +1.0 → <b>23.1</b> → playing 23 (cap not reached).</li>
+          </ul>
+        `],
+        ['✅ CSVs & Storage', `
+          <b>What is a CSV?</b> A simple text format for table data — each line is a row, commas separate values.<br/>
+          <b>How the app uses CSVs:</b> Import a CSV to analyse locally. Past events are permanently stored in Supabase Storage and listed under “View Past Golf Events”.
+        `],
+        ['✅ Geek Appendix — Supabase & GitHub', `
+          <b>Supabase</b><br/>Bucket: <b>den-events</b> (event CSVs). Table: <b>season_standings</b> (league totals, eclectic, best hole, events count).<br/><br/>
+          <b>GitHub</b><br/>Hosted on GitHub Pages. Repo has: <code>index.html</code> (React + Tailwind + Supabase), CSV parser, handicap & countback logic. Pushing to <code>main</code> deploys automatically.
+        `],
+      ];
+      sections.forEach(([title, html]) => root.appendChild(createAccordion(title, html)));
+
+      // QR: prefer static PNG, fallback to generator
+      const qrImg = document.getElementById('qr-img');
+      const qrGen = document.getElementById('qr-gen');
+      qrImg.addEventListener('error', ()=>{
+        qrImg.classList.add('hidden');
+        new QRCode(qrGen, {
+          text: "https://kevanojb.github.io/Den-Society/",
+          width: 128, height: 128,
+          colorDark: "#12663b", colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      });
+      qrImg.addEventListener('load', ()=> qrImg.classList.remove('hidden'));
+      // Trigger load state (forces ‘error’ event if PNG missing)
+      qrImg.src = qrImg.getAttribute('src');
+    </script>
+  </body>
+</html>
