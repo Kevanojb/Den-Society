@@ -370,6 +370,7 @@
 
         const [eventName,setEventName]=useState('Den Society Meeting');
         const [players,setPlayers]=useState([]);
+        theSeasonInit:
         const [season,setSeason]=useState({});
         const fileInputRef = useRef(null);
 
@@ -548,11 +549,11 @@
                   <button className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700" onClick={resetSeasonStandings}>Reset Season Standings</button>
                   <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={exportEventCSV} disabled={!canAct}>Download CSV</button>
 
-                  <!-- New: link out to the full standalone help page -->
+                  {/* New: link out to the full standalone help page */}
                   <a href="./help.html" className="w-full block text-left rounded-xl border border-squab-300 bg-white px-3 py-2" target="_blank" rel="noopener">
                     Help / How it works (full page)
                   </a>
-                  <!-- Keep in-app help too -->
+                  {/* Keep in-app help too */}
                   <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('help')}>Help / How it works (in-app)</button>
                 </div>
               </div>
