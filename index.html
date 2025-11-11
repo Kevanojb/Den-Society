@@ -53,9 +53,6 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
-    <!-- QR for in-app Help -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
     <style>
       body {
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
@@ -187,174 +184,9 @@
         };
       }
 
-      // ---------- Help component (accordion) ----------
-      function HelpSection({title, children, defaultOpen=false}) {
-        const [open, setOpen] = React.useState(defaultOpen);
-        return (
-          <div className="border border-squab-300 rounded-xl bg-white">
-            <button
-              className="w-full flex items-center justify-between px-4 py-3 text-left"
-              onClick={()=>setOpen(v=>!v)}
-              aria-expanded={open}
-            >
-              <span className="font-semibold">{title}</span>
-              <span className={`transition-transform ${open?'rotate-180':''}`}>▾</span>
-            </button>
-            <div className={`px-4 pb-4 overflow-hidden transition-all ${open?'max-h-[4000px]':'max-h-0'}`}>
-              <div className="pt-1 text-sm text-neutral-800">{children}</div>
-            </div>
-          </div>
-        );
-      }
-      function Badge({label, className}) {
-        return <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${className}`}>{label}</span>;
-      }
-      function Help(){
-        useEffect(()=>{
-          const holder = document.getElementById("help-qr");
-          if(holder && holder.childNodes.length===0){
-            new QRCode(holder, {
-              text: "https://kevanojb.github.io/Den-Society/",
-              width: 128, height: 128,
-              colorDark: "#12663b", colorLight: "#ffffff",
-              correctLevel: QRCode.CorrectLevel.M
-            });
-          }
-        },[]);
-        return (
-          <section className="rounded-2xl p-4 md:p-6 panel-mint shadow-sm">
-            <div className="flex items-center gap-3 mb-3">
-              <img src="https://squabbitgolf.com/assets/icon_transparent.png" alt="Squabbit" className="w-10 h-10"/>
-              <h2 className="text-xl font-bold text-squab-900">Den Society — Help & Guide</h2>
-            </div>
-            <p className="text-sm text-neutral-700 mb-4">Tap a section to expand. This mirrors the PDF, with the Geek Appendix at the end.</p>
-            <div className="grid gap-2">
-              <HelpSection title="✅ What the System Does" defaultOpen={true}>
-                <ul className="list-disc pl-6 space-y-1">
-                  <li>Load &amp; view past events</li>
-                  <li>Calculate points, handicaps, season results</li>
-                  <li>Show player ratings with colour badges</li>
-                  <li>Maintain eclectic leaderboard</li>
-                  <li>Produce season standings</li>
-                  <li>Export or import CSV event files</li>
-                  <li>Members can analyse their own Squabbit rounds</li>
-                </ul>
-              </HelpSection>
-
-              <HelpSection title="✅ Home Menu (8 Items)">
-                <ol className="list-decimal pl-6 space-y-1">
-                  <li>View Past Golf Events</li>
-                  <li>View Player Ratings</li>
-                  <li>Check Season Standings</li>
-                  <li>Check Eclectic Leaderboard</li>
-                  <li>Import CSV</li>
-                  <li>Add Event → Season <span className="text-[11px] text-neutral-500">(Admin only)</span></li>
-                  <li>Reset Season Standings <span className="text-[11px] text-neutral-500">(Admin only)</span></li>
-                  <li>Download CSV</li>
-                </ol>
-              </HelpSection>
-
-              <HelpSection title="✅ View Past Golf Events">
-                Loads events from Supabase (grouped by year). Choose one to make it the <b>Current Event</b>. Once loaded, Ratings / Standings / Eclectic / Export are available.
-              </HelpSection>
-
-              <HelpSection title="✅ View Player Ratings">
-                Works only when an event is loaded. If not, the app prompts you to import or load one and returns to Menu.
-                <div className="mt-3">
-                  <div className="font-medium mb-1">Colour badges</div>
-                  <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
-                    <div><Badge label="Excellent" className="bg-emerald-100 text-emerald-800" /> — Average ≥ 3.0</div>
-                    <div><Badge label="Good" className="bg-emerald-50 text-emerald-700" /> — Average ≥ 2.5</div>
-                    <div><Badge label="Solid" className="bg-neutral-100 text-neutral-800" /> — Average ≥ 2.0</div>
-                    <div><Badge label="Needs work" className="bg-amber-100 text-amber-800" /> — Average ≥ 1.5</div>
-                    <div><Badge label="Struggle" className="bg-red-100 text-red-800" /> — Average &lt; 1.5</div>
-                  </div>
-                  <p className="mt-2 text-neutral-700">Badges show where players gain/lose strokes vs the field — great for targeted practice.</p>
-                </div>
-              </HelpSection>
-
-              <HelpSection title="✅ Season Standings">
-                Shows Total points, Events played, Best event, Best hole score, Eclectic total. Updates only when an admin adds an event to the season.
-              </HelpSection>
-
-              <HelpSection title="✅ Eclectic Leaderboard">
-                Tracks a player’s <b>best Stableford for each hole</b> across all season events. Example: 2 points on H7 in Event 1, 3 points in Event 2 → Eclectic H7 = 3.
-              </HelpSection>
-
-              <HelpSection title="✅ Import CSV">
-                Import Squabbit or other event CSVs for analysis. Imported events <b>do not</b> affect the season until an admin adds them.
-              </HelpSection>
-
-              <HelpSection title="✅ Add Event → Season (Admin)">
-                You’ll be asked “Are you admin?” If Yes, the Current Event updates Season totals, Eclectic, Best event & Best hole, and league points. If No, you’re returned to Menu.
-              </HelpSection>
-
-              <HelpSection title="✅ Reset Season Standings (Admin)">
-                Clears season totals and the eclectic leaderboard. Does <b>not</b> delete Supabase-stored event CSVs (safe reset for new season).
-              </HelpSection>
-
-              <HelpSection title="✅ Calculations — Stableford, Countback, Handicaps">
-                <div className="mt-2">
-                  <div className="font-medium">Stableford</div>
-                  <p>Read directly from the Squabbit CSV.</p>
-
-                  <div className="font-medium mt-2">Countback</div>
-                  <p>Applied <b>only</b> to the top-score tie. Others share league points equally.</p>
-                  <p className="text-[13px]">Order: Back 9 → Last 6 → Last 3 → 18 → 17 → … → 1. Still tied? Joint winners (all get winner’s cut & 20 pts).</p>
-
-                  <div className="font-medium mt-2">Handicap Bands (cuts & winners)</div>
-                  <table className="w-full text-[13px] mt-1 border border-squab-300 rounded">
-                    <thead className="bg-squab-100">
-                      <tr className="text-left">
-                        <th className="px-2 py-1">Band (Exact)</th>
-                        <th className="px-2 py-1">Cut / point over 34</th>
-                        <th className="px-2 py-1">Winner bonus cut</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="[&>*]:px-2 [&>*]:py-1 border-t"><td>0–9</td><td>0.5</td><td>1.0</td></tr>
-                      <tr className="[&>*]:px-2 [&>*]:py-1 border-t"><td>10–18</td><td>1.0</td><td>2.0</td></tr>
-                      <tr className="[&>*]:px-2 [&>*]:py-1 border-t"><td>19–28</td><td>1.0</td><td>2.5</td></tr>
-                      <tr className="[&>*]:px-2 [&>*]:py-1 border-t"><td>29–36</td><td>1.5</td><td>3.0</td></tr>
-                    </tbody>
-                  </table>
-                  <p className="text-[13px] mt-1"><b>Increases:</b> ≤31 points → +0.5 per point below 32. <b>Gender caps:</b> Men max playing 28; Women max playing 36.</p>
-                  <p className="text-[13px]"><b>New handicap:</b> Start exact → apply cut/increase → clamp → round to playing (respect caps).</p>
-
-                  <div className="font-medium mt-2">Examples</div>
-                  <ul className="list-disc pl-6 text-[13px]">
-                    <li>Exact 7.4, score 38 &amp; winner → 4 over 34 → 4×0.5=2.0 &amp; +1.0 winner cut → 7.4 − 3.0 = <b>4.4</b> → playing 4.</li>
-                    <li>Exact 22.1, score 30 → 2 below 32 → +1.0 → <b>23.1</b> → playing 23 (cap not reached).</li>
-                  </ul>
-                </div>
-              </HelpSection>
-
-              <HelpSection title="✅ CSVs & Storage">
-                <p><b>What is a CSV?</b> A simple text format for table data — each line is a row, commas separate values.</p>
-                <p><b>How the app uses CSVs:</b> Import a CSV to analyse locally. Past events are permanently stored in Supabase Storage and listed under “View Past Golf Events”.</p>
-              </HelpSection>
-
-              <HelpSection title="✅ Geek Appendix — Supabase & GitHub">
-                <p><b>Supabase</b><br/>Bucket: <b>den-events</b> (event CSVs). Table: <b>season_standings</b> (league totals, eclectic, best hole, events count).</p>
-                <p><b>GitHub</b><br/>Hosted on GitHub Pages. Repo has: index.html (React + Tailwind + Supabase), CSV parser, handicap & countback logic. Pushing to main deploys automatically.</p>
-              </HelpSection>
-
-              <HelpSection title="✅ QR Code">
-                <p>Scan to open Den Society</p>
-                <div id="help-qr" className="mt-2 inline-block p-2 bg-white rounded border border-squab-300"></div>
-              </HelpSection>
-            </div>
-
-            <div className="mt-4 text-sm">
-              Prefer a full-page manual? <a className="text-squab-700 underline" href="./help.html" target="_blank" rel="noopener">Open the standalone Help</a>.
-            </div>
-          </section>
-        );
-      }
-
       // ---------- App ----------
       function App(){
-        const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic | help
+        const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
         const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
         const [client,setClient] = useState(null);
@@ -545,12 +377,10 @@
                   <button className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700" onClick={resetSeasonStandings}>Reset Season Standings</button>
                   <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={exportEventCSV} disabled={!canAct}>Download CSV</button>
 
-                  {/* Link to full standalone Help page */}
+                  <!-- Only the external Help link remains -->
                   <a href="./help.html" className="w-full block text-left rounded-xl border border-squab-300 bg-white px-3 py-2" target="_blank" rel="noopener">
                     Help / How it works (full page)
                   </a>
-                  {/* In-app Help view */}
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('help')}>Help / How it works (in-app)</button>
                 </div>
               </div>
             </section>
@@ -716,7 +546,6 @@
               {view==='ratings' && <Ratings />}
               {view==='standings' && <Standings />}
               {view==='eclectic' && <Eclectic />}
-              {view==='help' && <Help />}
             </div>
           </div>
         );
