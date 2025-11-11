@@ -369,15 +369,34 @@
                   }}>View Player Ratings</button>
                   <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
                   <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
+
                   <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>{ fileInputRef.current && fileInputRef.current.click(); }}>Import CSV</button>
-                  <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={async e=>{
-                      try{ const f=e.target.files&&e.target.files[0]; if(!f) return; const text=await f.text(); const parsed=parseSquabbitCSV(text); setPlayers(parsed.players||[]); setEventName((f.name||'').replace(/\.[^.]+$/,'')); setView('event'); e.target.value=''; }catch(err){ toast('Bad CSV'); console.error(err); }
-                  }}/>
+                  <input
+                    id="importCsv"
+                    name="importCsv"
+                    aria-label="Import Squabbit CSV"
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    className="hidden"
+                    onChange={async e=>{
+                      try{
+                        const f=e.target.files&&e.target.files[0]; if(!f) return;
+                        const text=await f.text();
+                        const parsed=parseSquabbitCSV(text);
+                        setPlayers(parsed.players||[]);
+                        setEventName((f.name||'').replace(/\.[^.]+$/,''));
+                        setView('event');
+                        e.target.value='';
+                      }catch(err){ toast('Bad CSV'); console.error(err); }
+                    }}
+                  />
+
                   <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={addEventToSeasonGuarded} disabled={!canAct}>Add Event → Season</button>
                   <button className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700" onClick={resetSeasonStandings}>Reset Season Standings</button>
                   <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={exportEventCSV} disabled={!canAct}>Download CSV</button>
 
-                  <!-- Only the external Help link remains -->
+                  {/* Only the external Help link remains */}
                   <a href="./help.html" className="w-full block text-left rounded-xl border border-squab-300 bg-white px-3 py-2" target="_blank" rel="noopener">
                     Help / How it works (full page)
                   </a>
@@ -398,10 +417,27 @@
               {sharedGroups.length===0 && <div className="text-sm text-neutral-600 p-2">No shared CSVs yet.</div>}
               {sharedGroups.map(group=> (
                 <div key={group.year} className="mb-3">
-                  <div className="text-xs text-neutral-600 mb-1">{group.year}</div>
-                  <select className="w-full rounded-xl border border-squab-300 px-3 py-2 bg-white" onChange={async e=>{ const idx=e.target.value; if(idx==='') return; const item=group.events[Number(idx)]; await loadShared(item); }} >
+                  <label
+                    htmlFor={`events-${group.year}`}
+                    className="text-xs text-neutral-600 mb-1 block"
+                  >
+                    {group.year}
+                  </label>
+                  <select
+                    id={`events-${group.year}`}
+                    name={`events-${group.year}`}
+                    className="w-full rounded-xl border border-squab-300 px-3 py-2 bg-white"
+                    onChange={async e=>{
+                      const idx=e.target.value;
+                      if(idx==='') return;
+                      const item=group.events[Number(idx)];
+                      await loadShared(item);
+                    }}
+                  >
                     <option value="">Select an event…</option>
-                    {group.events.map((item,i)=> (<option key={item.path} value={i}>{item.name}</option>))}
+                    {group.events.map((item,i)=> (
+                      <option key={item.path} value={i}>{item.name}</option>
+                    ))}
                   </select>
                 </div>
               ))}
@@ -525,7 +561,7 @@
               </div>
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
-                  <thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>Name</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
+                  <thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>IName</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
                   <tbody>
                     {list.length===0 && <tr><td colSpan="21" className="py-3 text-neutral-600">No eclectic yet.</td></tr>}
                     {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-300"><td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal??0}</td>{(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}</tr>))}
