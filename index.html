@@ -9,22 +9,23 @@
     <meta property="og:title" content="Den Society — League & Eclectic" />
     <meta property="og:description" content="Event results, ratings, standings and eclectic leaderboard." />
 
-    <!-- IMPORTANT: Tailwind config BEFORE the CDN so custom colors work -->
+    <!-- Tailwind config BEFORE CDN (custom palette) -->
     <script>
+      tailwind = window.tailwind || {};
       tailwind.config = {
         darkMode: 'class',
         theme: {
           extend: {
             colors: {
               squab: {
-                50:  '#eefbf2', /* mint */
+                50:  '#eefbf2',
                 100: '#d8f5e3',
-                200: '#b4eac9', /* mint border */
+                200: '#b4eac9',
                 300: '#86dbab',
                 400: '#55c787',
                 500: '#2fb66a',
-                600: '#199f57', /* primary green */
-                700: '#147f47', /* darker border */
+                600: '#199f57',
+                700: '#147f47',
                 800: '#12663b',
                 900: '#0f5232'
               }
@@ -46,7 +47,7 @@
       .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
       .btn{padding:.5rem .75rem;border-radius:.75rem;transition:all .15s ease}
       .btn:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-      .panel-mint{ background:#eefbf2; border:1px solid #b4eac9 } /* squab 50 + 200 */
+      .panel-mint{ background:#eefbf2; border:1px solid #b4eac9 }
       @media print{ .hide-print{display:none!important} }
     </style>
   </head>
@@ -259,7 +260,7 @@
           const parsed=parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setEventName(item.name);
-          setView('event'); // go to event screen
+          setView('event');
           toast('Event loaded');
         }
 
@@ -327,6 +328,19 @@
           }
         }
 
+        async function resetSeasonStandings(){
+          const ok = window.confirm('This will CLEAR Season Standings and Eclectic totals.\nEvent CSVs in Supabase storage are kept.\n\nAre you admin and sure?');
+          if(!ok){ toast('Reset cancelled'); setView('home'); return; }
+          setSeason({});
+          if(client){
+            const del = await client.from('season_standings').delete().neq('name','');
+            if(del.error){ toast('Error: '+del.error.message); }
+            else{ toast('Season standings reset ✓'); }
+          } else {
+            toast('Season cleared locally');
+          }
+        }
+
         function exportEventCSV(){
           if(!computed.length){ toast('Load an event first'); return; }
           const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
@@ -337,7 +351,7 @@
         // ---------- UI ----------
         function Header(){
           return (
-            <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white">
+            <header className="hide-print rounded-2xl p-4 border border-squab-900 bg-squab-800 text-white">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h1 className="text-xl md:text-2xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
@@ -357,7 +371,7 @@
             <section className="rounded-2xl p-3 md:p-4 panel-mint shadow-sm">
               <button
                 type="button"
-                className="w-full bg-white text-neutral-900 border border-squab-200 rounded-xl px-4 py-3 flex items-center justify-between"
+                className="w-full bg-white text-neutral-900 border border-squab-300 rounded-xl px-4 py-3 flex items-center justify-between"
                 onClick={()=>setOpen(v=>!v)}
                 aria-expanded={open?'true':'false'}
               >
@@ -367,13 +381,25 @@
 
               <div className={`overflow-hidden transition-all ${open?'max-h-[2000px]':'max-h-0'}`}>
                 <div className="mt-3 grid gap-2">
-                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('past')}>View Past Golf Events</button>
-                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('ratings')}>View Player Ratings</button>
-                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
-                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
+                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('past')}>View Past Golf Events</button>
 
                   <button
-                    className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
+                    className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2"
+                    onClick={()=>{
+                      if (!computed || computed.length === 0) {
+                        toast('Load a past event or import a CSV first');
+                        setView('home');
+                        return;
+                      }
+                      setView('ratings');
+                    }}
+                  >View Player Ratings</button>
+
+                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
+                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
+
+                  <button
+                    className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2"
                     onClick={()=>{ fileInputRef.current && fileInputRef.current.click(); }}
                   >Import CSV</button>
                   <input
@@ -388,21 +414,32 @@
                         const text=await f.text();
                         const parsed=parseSquabbitCSV(text);
                         setPlayers(parsed.players||[]);
-                        setEventName((f.name||'').replace(/\.[^.]+$/,''));
+                        setEventName((f.name||'').replace(/\.[^.]+$'/,'').replace(/\.[^.]+$/,''));
                         setView('event');
                         e.target.value='';
                       }catch(err){ toast('Bad CSV'); console.error(err); }
                     }}
                   />
 
+                  {/** Admin-guarded add-to-season */}
                   <button
-                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-200 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
-                    onClick={addEventToSeason}
+                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
+                    onClick={async ()=>{
+                      if(!canAct){ return; }
+                      const ok = window.confirm('Only Admin should add events.\n\nAre you admin?');
+                      if(!ok){ toast('Action cancelled'); setView('home'); return; }
+                      await addEventToSeason();
+                    }}
                     disabled={!canAct}
                   >Add Event → Season</button>
 
                   <button
-                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-200 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
+                    className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700"
+                    onClick={resetSeasonStandings}
+                  >Reset Season Standings</button>
+
+                  <button
+                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
                     onClick={exportEventCSV}
                     disabled={!canAct}
                   >Download CSV</button>
@@ -414,16 +451,16 @@
 
         function PastEvents(){
           return (
-            <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-200 shadow-sm">
+            <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-300 shadow-sm">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-squab-900">Past Den Society Golf Games</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
               </div>
               {sharedGroups.length===0 && <div className="text-sm text-neutral-600 p-2">No shared CSVs yet.</div>}
               {sharedGroups.map(group=> (
                 <div key={group.year} className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">{group.year}</div>
-                  <select className="w-full rounded-xl border border-squab-200 px-3 py-2 bg-white" onChange={async e=>{ const idx=e.target.value; if(idx==='') return; const item=group.events[Number(idx)]; await loadShared(item); }} >
+                  <select className="w-full rounded-xl border border-squab-300 px-3 py-2 bg-white" onChange={async e=>{ const idx=e.target.value; if(idx==='') return; const item=group.events[Number(idx)]; await loadShared(item); }} >
                     <option value="">Select an event…</option>
                     {group.events.map((item,i)=> (<option key={item.path} value={i}>{item.name}</option>))}
                   </select>
@@ -435,23 +472,23 @@
 
         function EventScreen(){
           return (
-            <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
+            <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-300 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-squab-900">Event — {eventName || 'Selected Event'}</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('past')}>Back</button>
+                <button className="btn border border-squab-300" onClick={()=>setView('past')}>Back</button>
               </div>
 
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead className="sticky top-0 bg-white z-10">
-                    <tr className="border-b border-squab-200 text-left">
+                    <tr className="border-b border-squab-300 text-left">
                       <th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th>
                     </tr>
                   </thead>
                   <tbody className="[&_tr:nth-child(even)]:bg-squab-50">
                     {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-600">Pick an event to see players.</td></tr>)}
                     {computed.map((r,i)=>(
-                      <tr key={i} className="border-b border-squab-200">
+                      <tr key={i} className="border-b border-squab-300">
                         <td>{r.position}</td>
                         <td className="whitespace-nowrap">{r.name}</td>
                         <td>{Math.round(r.startExact)}</td>
@@ -472,13 +509,26 @@
         function Ratings(){
           const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
           const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
-          const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
+          const ratingLabel = avg =>
+            avg>=3 ? 'Excellent' :
+            avg>=2.5 ? 'Good' :
+            avg>=2 ? 'Solid' :
+            avg>=1.5 ? 'Needs work' : 'Struggle';
           const badgeClass = avg =>
-            avg>=3 ? 'bg-emerald-100 text-emerald-800' :
-            avg>=2.5 ? 'bg-emerald-50 text-emerald-700' :
-            avg>=2 ? 'bg-neutral-100 text-neutral-800' :
-            avg>=1.5 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800';
+            avg>=3   ? 'bg-emerald-100 text-emerald-800' :
+            avg>=2.5 ? 'bg-emerald-50  text-emerald-700' :
+            avg>=2   ? 'bg-neutral-100 text-neutral-800' :
+            avg>=1.5 ? 'bg-amber-100  text-amber-800' :
+                       'bg-red-100    text-red-800';
           const eventParAverages=(perHole,pars)=>{ const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}}; for(let i=0;i<Math.min(18,perHole.length);i++){ const pts=Number(perHole[i])||0; const par=Number(pars[i])||4; if(sums[par]){ sums[par].s+=pts; sums[par].c++; } } const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0; return {p3:avg(3),p4:avg(4),p5:avg(5)}; };
+
+          // Safety guard: bounce back if no event loaded
+          React.useEffect(()=>{
+            if (!Array.isArray(computed) || computed.length === 0) {
+              toast('Load a past event or import a CSV first');
+              setView('home');
+            }
+          }, [computed.length]);
 
           const ratings = React.useMemo(()=>{
             const out=[]; for(const r of computed){ const pars=(r.gender==='F')?defaultWomen:defaultMen; const av=eventParAverages(r.perHole||[],pars); out.push({name:r.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:to1(av.p3+av.p4+av.p5)}); }
@@ -489,16 +539,16 @@
           },[computed]);
 
           return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
+            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-squab-900">Player Ratings — {eventName||'This Event'}</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
               </div>
 
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr className="border-b border-squab-200 text-left">
+                    <tr className="border-b border-squab-300 text-left">
                       <th>Name</th>
                       <th>Par-3 avg</th><th>Par-3 rating</th>
                       <th>Par-4 avg</th><th>Par-4 rating</th>
@@ -510,14 +560,14 @@
                       <tr><td colSpan="7" className="py-3 text-neutral-600">Import a Squabbit CSV or pick one from Past Events to see ratings.</td></tr>
                     )}
                     {ratings.map(r=> (
-                      <tr key={r.name} className="border-b border-squab-200">
+                      <tr key={r.name} className="border-b border-squab-300">
                         <td className="font-medium">{r.name}</td>
                         <td>{r.p3.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-800">{ratingLabel(r.p3)}</span></td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
                         <td>{r.p4.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700">{ratingLabel(r.p4)}</span></td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
                         <td>{r.p5.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-800">{ratingLabel(r.p5)}</span></td>
+                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -530,16 +580,16 @@
         function Standings(){
           const list = Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
           return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
+            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-squab-900">Season Standings</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
               </div>
               <div className="overflow-auto">
-                <table className="min-w-full text-sm"><thead><tr className="border-b border-squab-200 text-left"><th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th></tr></thead>
+                <table className="min-w-full text-sm"><thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th></tr></thead>
                   <tbody>
                     {list.length===0 && <tr><td colSpan="7" className="py-3 text-neutral-600">No season data found.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-200"><td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td><td>{r.bestEventPoints??0}</td><td>{r.bestHolePoints??0}</td><td>{r.eclecticTotal??0}</td></tr>))}
+                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-300"><td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td><td>{r.bestEventPoints??0}</td><td>{r.bestHolePoints??0}</td><td>{r.eclecticTotal??0}</td></tr>))}
                   </tbody>
                 </table>
               </div>
@@ -550,17 +600,17 @@
         function Eclectic(){
           const list = Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name));
           return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
+            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-squab-900">Eclectic Leaderboard</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
               </div>
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
-                  <thead><tr className="border-b border-squab-200 text-left"><th>Rank</th><th>Name</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
+                  <thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>Name</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
                   <tbody>
                     {list.length===0 && <tr><td colSpan="21" className="py-3 text-neutral-600">No eclectic yet.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-200"><td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal??0}</td>{(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}</tr>))}
+                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-300"><td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal??0}</td>{(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}</tr>))}
                   </tbody>
                 </table>
               </div>
@@ -587,3 +637,4 @@
     </script>
   </body>
 </html>
+
