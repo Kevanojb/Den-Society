@@ -66,6 +66,10 @@
       const to1=x=>Math.round((Number(x)||0)*10)/10;
       function toast(msg){ try{ const t=document.createElement('div'); t.className='fixed bottom-4 right-4 left-4 md:left-auto md:right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50 text-center'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);}catch{}}
 
+      // Default pars (fallback if CSV doesn’t contain Par row)
+      const COURSE_DEFAULT_MEN   = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+      const COURSE_DEFAULT_WOMEN = [4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
+
       // Header-ish / non-player names
       const isTeamLike = name => {
         const s = (name || '').trim();
@@ -98,7 +102,6 @@
 
       // ---------- CSV parsing ----------
 
-      // Choose delimiter intelligently and trim cells
       function splitSmart(raw){
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
@@ -109,7 +112,7 @@
         return Number.isFinite(v)?v:NaN;
       }
 
-      // Robust per-hole Stableford reader for Squabbit card rows
+      // Per-hole Stableford reader for Squabbit card rows
       function readStablefordPerHole(row){
         let start = -1;
         for (let i = 0; i < row.length; i++) {
@@ -145,12 +148,38 @@
         return vals.slice(0, 18);
       }
 
-      // Main Squabbit parser – robust, and skips "Player" header everywhere
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n');
         const lines = rows.map(splitSmart);
 
-        // 1. Optional roster (Name/Hdcp + extra columns)
+        // ---- 0. Course par from "Par" row (if present) ----
+        let parsedPars = null;
+        for (let i = 0; i < lines.length; i++) {
+          const row = lines[i];
+          if (!row || !row[0]) continue;
+          if (String(row[0]).trim().toLowerCase() === 'par') {
+            const nums = [];
+            for (let j = 3; j < row.length; j++) {
+              const cell = String(row[j] || '').trim();
+              const n = parseInt(cell,10);
+              if (!Number.isNaN(n)) nums.push(n);
+            }
+            if (nums.length >= 19) {
+              // Pattern: 9 holes, 36, 9 holes, 36, 72
+              const front = nums.slice(0,9);
+              const back = nums.slice(10,19);
+              parsedPars = front.concat(back);
+            } else if (nums.length === 18) {
+              parsedPars = nums.slice(0,18);
+            }
+            break;
+          }
+        }
+        if (!parsedPars || parsedPars.length !== 18) {
+          parsedPars = COURSE_DEFAULT_MEN.slice();
+        }
+
+        // ---- 1. Optional roster (Name/Hdcp + extra columns) ----
         let playerHeaderRow = -1;
         for (let i = 0; i < lines.length; i++) {
           if ((lines[i][0] || '') === 'Name' && (lines[i][1] || '') === 'Hdcp') {
@@ -169,7 +198,7 @@
             const name = (row[0] || '').trim();
             if (!name) break;
             if (isTeamLike(name)) continue;
-            if (/^player$/i.test(name)) continue; // explicit "Player" header guard
+            if (/^player$/i.test(name)) continue; // extra guard
 
             const hcap = parseFloat((row[1] || '').trim());
             if (!Number.isNaN(hcap)) {
@@ -178,7 +207,7 @@
           }
         }
 
-        // 2. Gender hints from tees
+        // ---- 2. Gender hints from tees ----
         const genderMap = {};
         for (let r = 0; r < lines.length; r++) {
           const row = lines[r];
@@ -193,7 +222,7 @@
           if (genderMap[p.name]) p.gender = genderMap[p.name];
         }
 
-        // 3. Stableford totals from the "Stableford" summary table (handles extra rounds/games)
+        // ---- 3. Stableford totals from the "Stableford" summary table ----
         let totalsStart = -1;
         for (let i = 0; i < lines.length; i++) {
           const first = (lines[i][0] || '').trim().toLowerCase();
@@ -216,7 +245,7 @@
             if (!name || name === '...' || /^round\s*\d+/i.test(name)) break;
 
             // Skip header / aggregate-ish rows
-            if (/^player$/i.test(name)) continue; // <--- explicit Player header guard
+            if (/^player$/i.test(name)) continue;
             if (isTeamLike(name)) continue;
             if (!/[A-Za-z]/.test(name)) continue;
 
@@ -237,7 +266,7 @@
           }
         }
 
-        // 4. Per-hole Stableford + handicap + totals from individual cards
+        // ---- 4. Per-hole Stableford + handicap + totals from individual cards ----
         const holeData = {};
         for (let pi = 0; pi < players.length; pi++) {
           const p = players[pi];
@@ -289,7 +318,7 @@
           }
         }
 
-        // 5. Build final players array in the shape the app expects
+        // ---- 5. Build final players array ----
         return {
           players: players.map(p => {
             const card = holeData[p.name] || {};
@@ -315,7 +344,11 @@
               back9: card.back9 || 0,
               perHole: card.perHole || []
             };
-          })
+          }),
+
+          // Use one par set for now; we can split by gender later if needed
+          parsMen: parsedPars,
+          parsWomen: parsedPars
         };
       }
 
@@ -348,6 +381,10 @@
         const [eventName,setEventName]=useState('Den Society Meeting');
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
+        const [coursePars,setCoursePars] = useState({
+          men: COURSE_DEFAULT_MEN,
+          women: COURSE_DEFAULT_WOMEN
+        });
         const fileInputRef = useRef(null);
 
         useEffect(()=>{ // init supabase + fetch
@@ -391,6 +428,10 @@
           const parsed=parseSquabbitCSV(text);
           setPlayers(parsed.players||[]);
           setEventName(item.name);
+          setCoursePars({
+            men: parsed.parsMen || COURSE_DEFAULT_MEN,
+            women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
+          });
           setView('event'); // go to event screen
           toast('Event loaded');
         }
@@ -521,6 +562,10 @@
                         const parsed=parseSquabbitCSV(text);
                         setPlayers(parsed.players||[]);
                         setEventName((f.name||'').replace(/\.[^.]+$/,''));
+                        setCoursePars({
+                          men: parsed.parsMen || COURSE_DEFAULT_MEN,
+                          women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
+                        });
                         setView('event');
                         e.target.value='';
                       }catch(err){ toast('Bad CSV'); console.error(err); }
@@ -602,15 +647,44 @@
         }
 
         function Ratings(){
-          const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-          const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
-          const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
-          const eventParAverages=(perHole,pars)=>{ const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}}; for(let i=0;i<Math.min(18,perHole.length);i++){ const pts=Number(perHole[i])||0; const par=Number(pars[i])||4; if(sums[par]){ sums[par].s+=pts; sums[par].c++; } } const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0; return {p3:avg(3),p4:avg(4),p5:avg(5)}; };
+          const menPars   = coursePars.men   || COURSE_DEFAULT_MEN;
+          const womenPars = coursePars.women || COURSE_DEFAULT_WOMEN;
+
+          const ratingLabel = avg =>
+            avg>=3   ? 'Excellent' :
+            avg>=2.5 ? 'Good'      :
+            avg>=2   ? 'Solid'     :
+            avg>=1.5 ? 'Needs work': 'Struggle';
+
+          const eventParAverages=(perHole,pars)=>{
+            const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
+            for(let i=0;i<Math.min(18,perHole.length,pars.length);i++){
+              const pts=Number(perHole[i])||0;
+              const par=Number(pars[i])||4;
+              if(sums[par]){ sums[par].s+=pts; sums[par].c++; }
+            }
+            const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
+            return {p3:avg(3),p4:avg(4),p5:avg(5)};
+          };
 
           const ratings = React.useMemo(()=>{
-            const out=[]; for(const r of computed){ const pars=(r.gender==='F')?defaultWomen:defaultMen; const av=eventParAverages(r.perHole||[],pars); out.push({name:r.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:to1(av.p3+av.p4+av.p5)}); }
+            const out=[];
+            for(const r of computed){
+              const pars = (r.gender==='F') ? womenPars : menPars;
+              const av = eventParAverages(r.perHole||[], pars);
+              out.push({
+                name: r.name,
+                p3: to1(av.p3),
+                p4: to1(av.p4),
+                p5: to1(av.p5),
+                total: to1(av.p3 + av.p4 + av.p5)
+              });
+            }
             return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-          },[computed]);
+          },[computed, menPars, womenPars]);
+
+          // (Field averages kept for future use – currently not rendered)
+          // const fieldAvg = React.useMemo(()=>{ ... },[computed, menPars, womenPars]);
 
           return (
             <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
