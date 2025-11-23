@@ -11,8 +11,8 @@
 
     <!-- IMPORTANT: Tailwind config BEFORE the CDN so custom colors work -->
     <script>
-      tailwind = window.tailwind || {};
-      tailwind.config = {
+      window.tailwind = window.tailwind || {};
+      window.tailwind.config = {
         darkMode: 'class',
         theme: {
           extend: {
@@ -65,7 +65,20 @@
       const downloadCSV=(filename, rows)=>{ const csv=rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
       const to1=x=>Math.round((Number(x)||0)*10)/10;
       function toast(msg){ try{ const t=document.createElement('div'); t.className='fixed bottom-4 right-4 left-4 md:left-auto md:right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50 text-center'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);}catch{}}
-      const isTeamLike = name => { const s=(name||'').trim(); return /^(team(\s*\d+)?)$/i.test(s) || /^team average$/i.test(s) || /^stableford$/i.test(s) || /^strokeplay$/i.test(s) || /^players?$/i.test(s) || /^round\s*\d+$/i.test(s) || /^(out|in|total|s\.i\.|par)$/i.test(s); };
+
+      // Header-ish / non-player names
+      const isTeamLike = name => {
+        const s = (name || '').trim();
+        return (
+          /^players?$/i.test(s) ||           // Player / Players (treat as header)
+          /^team(\s*\d+)?$/i.test(s) ||     // Team, Team 1, Team 2
+          /^team average$/i.test(s) ||
+          /^stableford$/i.test(s) ||
+          /^strokeplay$/i.test(s) ||
+          /^round\s*\d+$/i.test(s) ||
+          /^(out|in|total|s\.i\.|par)$/i.test(s)
+        );
+      };
 
       // Handicap maths
       function playingCapByGender(g){ return g==="F"?36:28; }
@@ -132,7 +145,7 @@
         return vals.slice(0, 18);
       }
 
-      // Main Squabbit parser – robust to different "games chosen" layouts
+      // Main Squabbit parser – robust, and skips "Player" header everywhere
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n');
         const lines = rows.map(splitSmart);
@@ -152,9 +165,12 @@
           for (let i = playerHeaderRow + 1; i < lines.length; i++) {
             const row = lines[i];
             if (!row) break;
+
             const name = (row[0] || '').trim();
             if (!name) break;
             if (isTeamLike(name)) continue;
+            if (/^player$/i.test(name)) continue; // explicit "Player" header guard
+
             const hcap = parseFloat((row[1] || '').trim());
             if (!Number.isNaN(hcap)) {
               players.push({ name, handicap: hcap, gender: 'M' });
@@ -193,10 +209,16 @@
           for (let i = totalsStart + 2; i < lines.length; i++) {
             const row = lines[i];
             if (!row) break;
+
             const name = (row[0] || '').trim();
+
+            // Stop at blank / "..." / "Round X"
             if (!name || name === '...' || /^round\s*\d+/i.test(name)) break;
-            if (/^player$/i.test(name) || !/[A-Za-z]/.test(name)) continue;
+
+            // Skip header / aggregate-ish rows
+            if (/^player$/i.test(name)) continue; // <--- explicit Player header guard
             if (isTeamLike(name)) continue;
+            if (!/[A-Za-z]/.test(name)) continue;
 
             // Collect all numeric cells apart from the name; last numeric = Total
             const numeric = [];
@@ -583,19 +605,11 @@
           const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
           const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
           const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
-          const badgeClass = avg =>
-            avg>=3 ? 'bg-emerald-100 text-emerald-800' :
-            avg>=2.5 ? 'bg-emerald-50 text-emerald-700' :
-            avg>=2 ? 'bg-neutral-100 text-neutral-800' :
-            avg>=1.5 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800';
           const eventParAverages=(perHole,pars)=>{ const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}}; for(let i=0;i<Math.min(18,perHole.length);i++){ const pts=Number(perHole[i])||0; const par=Number(pars[i])||4; if(sums[par]){ sums[par].s+=pts; sums[par].c++; } } const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0; return {p3:avg(3),p4:avg(4),p5:avg(5)}; };
 
           const ratings = React.useMemo(()=>{
             const out=[]; for(const r of computed){ const pars=(r.gender==='F')?defaultWomen:defaultMen; const av=eventParAverages(r.perHole||[],pars); out.push({name:r.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:to1(av.p3+av.p4+av.p5)}); }
             return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-          },[computed]);
-
-          const fieldAvg = React.useMemo(()=>{ let s3m=0,c3m=0,s4m=0,c4m=0,s5m=0,c5m=0; let s3f=0,c3f=0,s4f=0,c4f=0,s5f=0,c5f=0; for(const r of computed){ const perHole=r.perHole||[]; const pars=(r.gender==='F')?defaultWomen:defaultMen; for(let h=0;h<Math.min(18,perHole.length);h++){ const pts=Number(perHole[h])||0, par=Number(pars[h])||4; if(r.gender==='F'){ if(par===3){s3f+=pts;c3f++;} else if(par===4){s4f+=pts;c4f++;} else if(par===5){s5f+=pts;c5f++;} } else { if(par===3){s3m+=pts;c3m++;} else if(par===4){s4m+=pts;c4m++;} else if(par===5){s5m+=pts;c5m++;} } } } const avg=(s,c)=>c?to1(s/c):0; return { men:{p3:avg(s3m,c3m),p4:avg(s4m,c4m),p5:avg(s5m,c5m)}, women:{p3:avg(s3f,c3f),p4:avg(s4f,c4f),p5:avg(s5f,c5f)} };
           },[computed]);
 
           return (
