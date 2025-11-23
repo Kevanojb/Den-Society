@@ -696,34 +696,104 @@
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr className="border-b border-squab-200 text-left">
-                      <th>Name</th>
-                      <th>Par-3 avg</th><th>Par-3 rating</th>
-                      <th>Par-4 avg</th><th>Par-4 rating</th>
-                      <th>Par-5 avg</th><th>Par-5 rating</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ratings.length===0 && (
-                      <tr><td colSpan="7" className="py-3 text-neutral-600">Import a Squabbit CSV or pick one from Past Events to see ratings.</td></tr>
-                    )}
-                    {ratings.map(r=> (
-                      <tr key={r.name} className="border-b border-squab-200">
-                        <td className="font-medium">{r.name}</td>
-                        <td>{r.p3.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-800">{ratingLabel(r.p3)}</span></td>
-                        <td>{r.p4.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700">{ratingLabel(r.p4)}</span></td>
-                        <td>{r.p5.toFixed(1)}</td>
-                        <td><span className="px-2 py-0.5 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-800">{ratingLabel(r.p5)}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          );
-        }
+
+                    function Ratings(){
+  const menPars   = coursePars.men   || COURSE_DEFAULT_MEN;
+  const womenPars = coursePars.women || COURSE_DEFAULT_WOMEN;
+
+  const ratingLabel = avg =>
+    avg>=3   ? 'Excellent' :
+    avg>=2.5 ? 'Good'      :
+    avg>=2   ? 'Solid'     :
+    avg>=1.5 ? 'Needs work': 'Struggle';
+
+  const badgeClass = avg =>
+    avg>=3   ? 'bg-emerald-100 text-emerald-800' :
+    avg>=2.5 ? 'bg-emerald-50 text-emerald-700'  :
+    avg>=2   ? 'bg-neutral-100 text-neutral-800' :
+    avg>=1.5 ? 'bg-amber-100 text-amber-800'     :
+               'bg-red-100 text-red-800';
+
+  const eventParAverages=(perHole,pars)=>{
+    const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
+    for(let i=0;i<Math.min(18,perHole.length,pars.length);i++){
+      const pts=Number(perHole[i])||0;
+      const par=Number(pars[i])||4;
+      if(sums[par]){ sums[par].s+=pts; sums[par].c++; }
+    }
+    const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
+    return {p3:avg(3),p4:avg(4),p5:avg(5)};
+  };
+
+  const ratings = React.useMemo(()=>{
+    const out=[];
+    for(const r of computed){
+      const pars = (r.gender==='F') ? womenPars : menPars;
+      const av = eventParAverages(r.perHole||[], pars);
+      out.push({
+        name: r.name,
+        p3: to1(av.p3),
+        p4: to1(av.p4),
+        p5: to1(av.p5),
+        total: to1(av.p3 + av.p4 + av.p5)
+      });
+    }
+    return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
+  },[computed, menPars, womenPars]);
+
+  return (
+    <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold text-squab-900">Player Ratings — {eventName||'This Event'}</h2>
+        <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+      </div>
+
+      <div className="overflow-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-squab-200 text-left">
+              <th>Name</th>
+              <th>Par-3 avg</th><th>Par-3 rating</th>
+              <th>Par-4 avg</th><th>Par-4 rating</th>
+              <th>Par-5 avg</th><th>Par-5 rating</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ratings.length===0 && (
+              <tr><td colSpan="7" className="py-3 text-neutral-600">Import a Squabbit CSV or pick one from Past Events to see ratings.</td></tr>
+            )}
+            {ratings.map(r=> (
+              <tr key={r.name} className="border-b border-squab-200">
+                <td className="font-medium">{r.name}</td>
+
+                <td>{r.p3.toFixed(1)}</td>
+                <td>
+                  <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>
+                    {ratingLabel(r.p3)}
+                  </span>
+                </td>
+
+                <td>{r.p4.toFixed(1)}</td>
+                <td>
+                  <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>
+                    {ratingLabel(r.p4)}
+                  </span>
+                </td>
+
+                <td>{r.p5.toFixed(1)}</td>
+                <td>
+                  <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>
+                    {ratingLabel(r.p5)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
         function Standings(){
           const list = Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
