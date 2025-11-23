@@ -1,593 +1,1529 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <title>Den Society — League & Eclectic</title>
-    <link rel="icon" href="./favicon.ico" />
-    <meta name="theme-color" content="#199f57" />
-    <meta property="og:title" content="Den Society — League & Eclectic" />
-    <meta
-      property="og:description"
-      content="Event results, ratings, standings and eclectic leaderboard."
-    />
-
-    <script>
-      tailwind = window.tailwind || {};
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            colors: {
-              squab: {
-                50: "#eefbf2",
-                100: "#d8f5e3",
-                200: "#b4eac9",
-                300: "#86dbab",
-                400: "#55c787",
-                500: "#2fb66a",
-                600: "#199f57",
-                700: "#147f47",
-                800: "#12663b",
-                900: "#0f5232"
-              }
-            }
-          }
-        }
-      };
-    </script>
-    <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- React + Babel + Supabase (UMD) -->
-    <script
-      crossorigin
-      src="https://unpkg.com/react@18/umd/react.production.min.js"
-    ></script>
-    <script
-      crossorigin
-      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
-    ></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-
+    <meta charset="utf-8"/>
+    <title>Den Society Game Analyser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <style>
-      body {
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
-          Helvetica, Arial;
+      :root{
+        --bg:#0b1020;
+        --bg2:#131a30;
+        --card:#181f3a;
+        --accent:#4fd1c5;
+        --accent-soft:rgba(79,209,197,0.15);
+        --accent-soft2:rgba(79,209,197,0.07);
+        --border:#2a3358;
+        --text:#f7fafc;
+        --muted:#a0aec0;
+        --danger:#fc8181;
+        --win:#9ae6b4;
+        --shadow:0 18px 45px rgba(0,0,0,0.55);
+        --shadow-soft:0 10px 30px rgba(0,0,0,0.35);
+        --radius-lg:18px;
+        --radius-xl:26px;
       }
-      .panel-mint {
-        background: #eefbf2;
-        border: 1px solid #b4eac9;
+      *{box-sizing:border-box;}
+      body{
+        margin:0;
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+        background:radial-gradient(circle at top, #243b53 0, #0b1020 52%);
+        color:var(--text);
+        min-height:100vh;
+        display:flex;
+        justify-content:center;
+        padding:24px;
       }
-      .btn {
-        padding: 0.5rem 0.75rem;
-        border-radius: 0.75rem;
-        transition: all 0.15s ease;
+      .app-shell{
+        width:100%;
+        max-width:1200px;
       }
-      .btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      .header{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        margin-bottom:16px;
+        gap:16px;
       }
-      .chip {
-        padding: 0.15rem 0.5rem;
-        border-radius: 0.5rem;
-        border: 1px solid #e5e5e5;
-        background: #fafafa;
+      .title-wrap{
+        display:flex;
+        align-items:center;
+        gap:12px;
       }
-      @media print {
-        .hide-print {
-          display: none !important;
-        }
+      .logo-pill{
+        width:42px;
+        height:42px;
+        border-radius:18px;
+        background:radial-gradient(circle at 30% 20%,#a0aec0,#4fd1c5);
+        box-shadow:0 10px 25px rgba(0,0,0,0.6);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:800;
+        color:#0b1020;
+        letter-spacing:0.04em;
+        font-size:18px;
+      }
+      .title{
+        font-size:20px;
+        font-weight:700;
+        letter-spacing:0.03em;
+        text-transform:uppercase;
+      }
+      .subtitle{
+        font-size:13px;
+        color:var(--muted);
+      }
+      .header-right{
+        display:flex;
+        gap:8px;
+        align-items:center;
+        flex-wrap:wrap;
+        justify-content:flex-end;
+      }
+      .badge{
+        font-size:11px;
+        letter-spacing:0.08em;
+        text-transform:uppercase;
+        padding:4px 10px;
+        border-radius:999px;
+        border:1px solid var(--border);
+        background:linear-gradient(135deg,rgba(15,23,42,0.7),rgba(30,64,175,0.7));
+        color:var(--muted);
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+      }
+      .badge-dot{
+        width:8px;
+        height:8px;
+        border-radius:999px;
+        background:radial-gradient(circle at 30% 30%,#f6e05e,#ecc94b);
+        box-shadow:0 0 12px rgba(236,201,75,0.7);
+      }
+      .layout{
+        display:grid;
+        grid-template-columns:minmax(0,1.15fr) minmax(0,0.85fr);
+        gap:18px;
+      }
+      @media(max-width:960px){
+        body{padding:16px;}
+        .layout{grid-template-columns:1fr;}
+      }
+      .card{
+        border-radius:var(--radius-xl);
+        background:radial-gradient(circle at top left,rgba(79,209,197,0.12),transparent 55%),radial-gradient(circle at bottom,rgba(45,55,72,0.9),#0b1020);
+        border:1px solid rgba(148,163,184,0.18);
+        box-shadow:var(--shadow);
+        padding:18px 18px 16px;
+        position:relative;
+        overflow:hidden;
+      }
+      .card::before{
+        content:"";
+        position:absolute;
+        inset:0;
+        background:radial-gradient(circle at top,rgba(79,209,197,0.08),transparent 55%);
+        opacity:0.6;
+        pointer-events:none;
+      }
+      .card-inner{
+        position:relative;
+        z-index:1;
+      }
+      .card-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:10px;
+        gap:8px;
+      }
+      .card-title{
+        font-size:15px;
+        font-weight:600;
+        letter-spacing:0.05em;
+        text-transform:uppercase;
+        color:#e2e8f0;
+      }
+      .card-title span{
+        font-size:11px;
+        font-weight:500;
+        color:var(--muted);
+        margin-left:6px;
+      }
+      .card-actions{
+        display:flex;
+        gap:6px;
+        flex-wrap:wrap;
+      }
+      .pill-btn{
+        font-size:11px;
+        padding:4px 9px;
+        border-radius:999px;
+        border:1px solid var(--border);
+        background:rgba(15,23,42,0.7);
+        color:var(--muted);
+        cursor:pointer;
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        backdrop-filter:blur(10px);
+      }
+      .pill-btn.primary{
+        border-color:rgba(79,209,197,0.5);
+        background:radial-gradient(circle at 10% 0,rgba(79,209,197,0.24),rgba(15,23,42,0.9));
+        color:#e6fffa;
+      }
+      .pill-btn.danger{
+        border-color:rgba(252,129,129,0.5);
+        color:var(--danger);
+      }
+      .pill-btn:disabled{
+        opacity:0.45;
+        cursor:default;
+      }
+      .pill-btn-label{
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+      }
+      .pill-dot{
+        width:7px;
+        height:7px;
+        border-radius:999px;
+        background:var(--accent);
+      }
+      .dropzone{
+        border-radius:16px;
+        border:1px dashed rgba(148,163,184,0.45);
+        background:linear-gradient(135deg,rgba(15,23,42,0.5),rgba(30,64,175,0.55));
+        padding:16px;
+        display:flex;
+        align-items:flex-start;
+        gap:14px;
+        cursor:pointer;
+        transition:all 0.18s ease-out;
+      }
+      .dropzone.dragover{
+        border-style:solid;
+        border-color:var(--accent);
+        box-shadow:0 0 0 1px rgba(79,209,197,0.5),0 20px 40px rgba(15,118,110,0.6);
+        transform:translateY(-1px);
+      }
+      .dropzone-icon{
+        width:32px;
+        height:32px;
+        border-radius:14px;
+        background:radial-gradient(circle at 30% 10%,#e6fffa,#4fd1c5);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        color:#1a202c;
+        box-shadow:0 12px 30px rgba(0,0,0,0.7);
+        flex-shrink:0;
+      }
+      .dropzone-content{
+        flex:1;
+      }
+      .dropzone-title{
+        font-size:14px;
+        font-weight:600;
+        margin-bottom:2px;
+      }
+      .dropzone-sub{
+        font-size:12px;
+        color:var(--muted);
+      }
+      .dropzone-meta{
+        font-size:11px;
+        color:#a3bffa;
+        margin-top:6px;
+      }
+      .file-meta{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-top:10px;
+        font-size:12px;
+        color:var(--muted);
+      }
+      .file-meta strong{color:#e2e8f0;font-weight:500;}
+      .file-tag{
+        padding:2px 8px;
+        border-radius:999px;
+        background:rgba(15,118,110,0.2);
+        border:1px solid rgba(34,197,178,0.6);
+        color:#a7f3d0;
+        font-size:11px;
+        letter-spacing:0.06em;
+        text-transform:uppercase;
+      }
+      .grid-two{
+        display:grid;
+        grid-template-columns:1.15fr 0.85fr;
+        gap:10px;
+      }
+      @media(max-width:800px){
+        .grid-two{grid-template-columns:1fr;}
+      }
+      .summary-card{
+        border-radius:18px;
+        border:1px solid rgba(148,163,184,0.2);
+        background:linear-gradient(135deg,rgba(15,23,42,0.9),rgba(30,64,175,0.7));
+        padding:12px 13px 11px;
+        box-shadow:var(--shadow-soft);
+      }
+      .summary-row{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        font-size:12px;
+        margin-bottom:4px;
+      }
+      .summary-label{
+        color:var(--muted);
+      }
+      .summary-value{
+        font-weight:600;
+        color:#e2e8f0;
+      }
+      .summary-sub{
+        font-size:11px;
+        color:var(--muted);
+        margin-top:4px;
+      }
+      .summary-main-number{
+        font-size:24px;
+        font-weight:700;
+        letter-spacing:0.04em;
+      }
+      .summary-main-label{
+        font-size:11px;
+        text-transform:uppercase;
+        letter-spacing:0.12em;
+        color:var(--muted);
+      }
+      .summary-main{
+        display:flex;
+        align-items:flex-end;
+        justify-content:space-between;
+        margin-bottom:6px;
+      }
+      .summary-chip{
+        font-size:11px;
+        padding:2px 8px;
+        border-radius:999px;
+        background:rgba(15,23,42,0.7);
+        border:1px solid rgba(148,163,184,0.4);
+        color:var(--muted);
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+      }
+      .summary-chip strong{color:#e2e8f0;font-weight:600;}
+      .flex-row{
+        display:flex;
+        gap:10px;
+        flex-wrap:wrap;
+      }
+      .pill-small{
+        font-size:11px;
+        padding:3px 8px;
+        border-radius:999px;
+        border:1px solid var(--border);
+        background:rgba(15,23,42,0.7);
+        color:var(--muted);
+      }
+      .pill-small.good{
+        border-color:rgba(56,161,105,0.7);
+        color:#9ae6b4;
+        background:rgba(22,101,52,0.25);
+      }
+      .pill-small.bad{
+        border-color:rgba(229,62,62,0.7);
+        color:var(--danger);
+        background:rgba(153,27,27,0.3);
+      }
+      .table-wrap{
+        border-radius:16px;
+        border:1px solid rgba(148,163,184,0.2);
+        background:radial-gradient(circle at top left,rgba(79,209,197,0.08),transparent 50%),rgba(15,23,42,0.92);
+        overflow:hidden;
+        margin-top:10px;
+      }
+      table{
+        width:100%;
+        border-collapse:collapse;
+        font-size:12px;
+      }
+      thead{
+        background:linear-gradient(135deg,rgba(15,23,42,0.9),rgba(30,64,175,0.8));
+      }
+      th,td{
+        padding:6px 9px;
+        text-align:left;
+        border-bottom:1px solid rgba(55,65,81,0.7);
+        white-space:nowrap;
+      }
+      th{
+        font-size:11px;
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+        color:#a0aec0;
+      }
+      tbody tr:nth-child(even){
+        background:rgba(15,23,42,0.85);
+      }
+      tbody tr:nth-child(odd){
+        background:rgba(15,23,42,0.9);
+      }
+      tbody tr.highlight{
+        background:rgba(22,163,74,0.2);
+      }
+      tbody tr:hover{
+        background:rgba(79,209,197,0.18);
+      }
+      .pos-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:24px;
+        padding:2px 6px;
+        border-radius:999px;
+        font-size:11px;
+        border:1px solid rgba(148,163,184,0.5);
+      }
+      .pos-badge.win{
+        border-color:rgba(72,187,120,0.9);
+        background:rgba(22,101,52,0.5);
+        color:#c6f6d5;
+      }
+      .pos-badge.cut{
+        border-color:rgba(239,68,68,0.8);
+        background:rgba(127,29,29,0.55);
+        color:#fed7d7;
+      }
+      .chip{
+        font-size:11px;
+        padding:2px 7px;
+        border-radius:999px;
+        border:1px solid rgba(148,163,184,0.6);
+        background:rgba(15,23,42,0.8);
+      }
+      .chip.win{
+        border-color:rgba(72,187,120,0.9);
+        color:#c6f6d5;
+      }
+      .chip.cut{
+        border-color:rgba(239,68,68,0.8);
+        color:#fed7d7;
+      }
+      .chip.csi-bad{
+        border-color:rgba(251,191,36,0.9);
+        color:#fefcbf;
+      }
+      .tag-pill{
+        font-size:10px;
+        padding:2px 6px;
+        border-radius:999px;
+        background:rgba(15,23,42,0.8);
+        border:1px solid rgba(148,163,184,0.6);
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+        color:var(--muted);
+      }
+      .tag-pill.strong{
+        border-color:rgba(79,209,197,0.9);
+        color:#e6fffa;
+      }
+      .section-title{
+        font-size:13px;
+        text-transform:uppercase;
+        letter-spacing:0.12em;
+        color:#a0aec0;
+        margin-bottom:6px;
+      }
+      .section-sub{
+        font-size:11px;
+        color:var(--muted);
+        margin-bottom:8px;
+      }
+      .list-compact{
+        list-style:none;
+        margin:0;
+        padding:0;
+        font-size:12px;
+      }
+      .list-compact li{
+        display:flex;
+        justify-content:space-between;
+        margin-bottom:3px;
+        color:var(--muted);
+      }
+      .list-compact strong{color:#e2e8f0;font-weight:500;}
+      .pill-mini{
+        font-size:10px;
+        padding:1px 6px;
+        border-radius:999px;
+        border:1px solid var(--border);
+        background:rgba(15,23,42,0.9);
+        color:var(--muted);
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+      }
+      .footer-note{
+        margin-top:14px;
+        font-size:11px;
+        color:var(--muted);
+        opacity:0.9;
+      }
+      .footer-note span{
+        color:#e2e8f0;
+      }
+      .score-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:30px;
+        padding:2px 6px;
+        border-radius:999px;
+        font-size:11px;
+        border:1px solid rgba(148,163,184,0.5);
+        background:rgba(15,23,42,0.9);
+      }
+      .score-badge.good{
+        border-color:rgba(56,161,105,0.9);
+        background:rgba(22,101,52,0.6);
+        color:#c6f6d5;
+      }
+      .score-badge.bad{
+        border-color:rgba(229,62,62,0.9);
+        background:rgba(127,29,29,0.7);
+        color:#fed7d7;
+      }
+      .hole-grid{
+        display:grid;
+        grid-template-columns:repeat(9,1fr);
+        gap:2px;
+        margin-top:4px;
+      }
+      .hole-cell{
+        font-size:10px;
+        padding:3px 0;
+        border-radius:999px;
+        background:rgba(15,23,42,0.9);
+        border:1px solid rgba(55,65,81,0.9);
+        text-align:center;
+        color:#e2e8f0;
+      }
+      .hole-cell.good{
+        border-color:rgba(56,161,105,0.9);
+        background:rgba(22,101,52,0.7);
+      }
+      .hole-cell.bad{
+        border-color:rgba(229,62,62,0.9);
+        background:rgba(127,29,29,0.8);
+      }
+      .tag-row{
+        display:flex;
+        flex-wrap:wrap;
+        gap:5px;
+        margin-top:4px;
+      }
+      .empty-state{
+        padding:12px;
+        border-radius:14px;
+        border:1px dashed rgba(148,163,184,0.4);
+        background:rgba(15,23,42,0.85);
+        font-size:12px;
+        color:var(--muted);
+      }
+      .error{
+        margin-top:8px;
+        font-size:12px;
+        color:var(--danger);
+      }
+      .spinner{
+        border-radius:999px;
+        width:14px;
+        height:14px;
+        border:2px solid rgba(148,163,184,0.5);
+        border-top-color:var(--accent);
+        animation:spin 0.7s linear infinite;
+      }
+      @keyframes spin{
+        to{transform:rotate(360deg);}
       }
     </style>
   </head>
-  <body class="bg-neutral-50 text-neutral-900">
-    <div id="root"></div>
+  <body>
+    <div id="root" class="app-shell"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script>
+      const {useState,useCallback,useMemo,useEffect} = React;
 
-    <script type="text/babel" data-presets="react">
-      /* global React, ReactDOM, supabase */
-      const { useState, useMemo, useEffect, useRef } = React;
-
-      // ---------- small utils ----------
-      const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
-      const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
-      const csvEscape=s=>{ if(s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"'+str.replace(/"/g,'""')+'"' : str; };
-      const downloadCSV=(filename, rows)=>{ const csv=rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
-      const to1=x=>Math.round((Number(x)||0)*10)/10;
-      const isTeamLike = name => { const s=(name||'').trim(); return /^(team(\s*\d+)?)$/i.test(s) || /^team average$/i.test(s) || /^stableford$/i.test(s) || /^strokeplay$/i.test(s) || /^players?$/i.test(s) || /^round\s*\d+$/i.test(s) || /^(out|in|total|s\.i\.|par)$/i.test(s); };
-      function toast(msg){ try{ const t=document.createElement('div'); t.className='fixed bottom-4 right-4 left-4 md:left-auto md:right-4 px-3 py-2 rounded-lg bg-black text-white text-sm shadow z-50 text-center'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .2s'; setTimeout(()=>t.remove(),220); }, 1400);}catch{}}
-
-      // Handicap maths
-      function playingCapByGender(g){ return g==="F"?36:28; }
-      function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
-      function cutPerPointOver34(h){ const r=rangeForHcap(h); return r==="0-9"?0.5:r==="10-18"?1:r==="19-28"?1:1.5; }
-      function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
-      function computeNewExactHandicap(start,g,pts,b9,w){
-        const startPlay=Math.round(start); let exact=start;
-        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
-        else if(pts<=31){ exact+=0.5*(32-pts);}
-        if(w) exact-=winnerBonusCut(startPlay);
-        const max=playingCapByGender(g);
-        const bounded=clamp(exact,0,60);
-        const nextPlay=clamp(Math.round(bounded),0,max);
-        return {nextExact:bounded,nextPlaying:nextPlay};
-      }
-      // Countback
-      function compareByCountback(a,b){
-        const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
-        const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
-        const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
-        const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
-        const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
-        for(let i=17;i>=0;i--){ const ai=Number(pa[i])||0, bi=Number(pb[i])||0; if(ai!==bi) return bi-ai; }
-        return 0;
-      }
-
-      // CSV parsing (short version)
-      function splitSmart(raw){ const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ','); return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim()); }
-      function toNum(x){ const v=parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:NaN; }
-      function readStablefordPerHole(row){
-        let start=-1; for(let i=0;i<row.length;i++){ if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; } }
-        if(start<0) return null;
-        const vals=[]; for(let j=start+1;j<row.length && vals.length<18;j++){
-          const raw=String(row[j]||'').trim(); if(raw==='') continue;
-          if(raw==='P'||raw==='p'||raw==='\\'){ vals.push(0); continue; }
-          const n=parseFloat(raw.replace(/[^0-9.\-]/g,'')); if(Number.isFinite(n)&&n>=0&&n<=6) vals.push(n);
-        }
-        while(vals.length<18) vals.push(0); return vals.slice(0,18);
-      }
-      function parseSquabbitCSV(text){
-        const rows=text.replace(/\r/g,'').split('\n'); const lines=rows.map(splitSmart);
-        // Optional roster (Name/Hdcp)
-        let playerHeaderRow=-1; for(let i=0;i<lines.length;i++){ if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; } }
-        const players=[];
-        if(playerHeaderRow>=0){ for(let i=playerHeaderRow+1;i<lines.length;i++){ const name=(lines[i][0]||'').trim(); if(!name) break; if(isTeamLike(name)) continue; const hcap=parseFloat((lines[i][1]||'').trim()); if(!Number.isNaN(hcap)) players.push({name:name,handicap:hcap,gender:'M'}); } }
-        // Gender hints
-        const genderMap={}; for(let r=0;r<lines.length;r++){ const row=lines[r]; const nm=(row[0]||'').trim(); if(!nm) continue; const tee=String(row[1]||'').toLowerCase(); if(/women|ladies|red tee/.test(tee)) genderMap[nm]='F'; else if(genderMap[nm]==null) genderMap[nm]='M'; }
-        for(let p=0;p<players.length;p++){ const pl=players[p]; if(genderMap[pl.name]) pl.gender=genderMap[pl.name]; }
-        // Totals under a "Stableford" header
-        let totalsStart=-1; for(let i=0;i<lines.length;i++){ if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; } }
-        const totals={};
-        if(totalsStart>=0){
-          for(let i=totalsStart+1;i<lines.length;i++){
-            const row=lines[i]; const a=(row[0]||'').trim(); const b=toNum(row[1]); const c=toNum(row[2]);
-            if(!a){ if(i>totalsStart+1) break; else continue; }
-            if(!/[A-Za-z]/.test(a) || a.length<3) continue;
-            const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
-            if(Number.isFinite(pts)) totals[a]=pts;
-            if(!players.some(p=>p.name===a)){ players.push({name:a,handicap:0,gender:(genderMap[a]||'M')}); }
-          }
-        }
-        // Per-hole from cards
-        const holeData={};
-        for(let pi=0;pi<players.length;pi++){
-          const p=players[pi];
-          for(let i=0;i<lines.length-1;i++){
-            if((lines[i][0]||'').trim()===p.name){
-              const stRow=lines[i+1]||[]; let hasStable=false; for(let j=0;j<stRow.length;j++){ if(String(stRow[j]).trim().toLowerCase()==='stableford'){ hasStable=true; break; } }
-              if(!hasStable) continue;
-              const perHole=readStablefordPerHole(stRow);
-              const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
-              holeData[p.name]={perHole:perHole, back9:back9};
-              break;
+      function splitSafe(line){
+        const parts=[];
+        let current='',inQuotes=false;
+        for(let i=0;i<line.length;i++){
+          const ch=line[i];
+          if(ch==='"'){
+            if(inQuotes && line[i+1]==='"'){
+              current+='"'; i++;
+            }else{
+              inQuotes=!inQuotes;
             }
+          }else if(ch===',' && !inQuotes){
+            parts.push(current); current='';
+          }else{
+            current+=ch;
           }
-          if(!holeData[p.name]) holeData[p.name]={perHole:Array(18).fill(0), back9:0};
         }
+        parts.push(current);
+        return parts;
+      }
+
+      function cleanNumberCell(str){
+        if(str==null) return null;
+        const raw=String(str).trim();
+        if(!raw) return null;
+        if(/^P$/i.test(raw)) return 0;
+        const cleaned=raw.replace(/£/g,'').replace(/,/g,'').replace(/[^\d.\-]/g,'');
+        if(cleaned===''||cleaned==='.'||cleaned==='-') return null;
+        const n=parseFloat(cleaned);
+        if(Number.isNaN(n)) return null;
+        return n;
+      }
+
+      function findRowIndex(rows,predicate){
+        for(let i=0;i<rows.length;i++){
+          if(predicate(rows[i],i)) return i;
+        }
+        return -1;
+      }
+
+      function isLikelyPlayerRow(row){
+        if(row.length<4) return false;
+        const name=row[0]||'';
+        const hdcp=row[1]||'';
+        if(!name || !/[a-z]/i.test(name)) return false;
+        const n=parseFloat(String(hdcp).replace(/[^0-9.\-]/g,''));
+        if(!Number.isFinite(n)) return false;
+        if(n<-10 || n>40) return false;
+        return true;
+      }
+
+      function readPlayersSection(rows){
+        const idx=findRowIndex(rows,row=>String(row[0]||'').trim().toLowerCase()==='players');
+        if(idx<0 || idx+1>=rows.length) return null;
+        const header=rows[idx+1];
+        const data=[];
+        for(let i=idx+2;i<rows.length;i++){
+          const row=rows[i];
+          if(!row || row.length===0) break;
+          if(!row[0] || !row[0].trim()) break;
+          if(String(row[0]).trim().toLowerCase()==='stableford') break;
+          if(row.every(cell=>String(cell).trim()==='')) break;
+          data.push(row);
+        }
+        const col=header.reduce((acc,name,i)=>{acc[String(name||'').trim().toLowerCase()] = i; return acc;}, {});
+        const players=[];
+        for(const row of data){
+          const name=row[col['name'] ?? 0] || '';
+          const hdcpCell=row[col['hdcp'] ?? 1] || '';
+          const role=row[col['role'] ?? 2] || '';
+          const gender=row[col['gender'] ?? 7] || '';
+          const tee=row[col['tee'] ?? 8] || '';
+          const totalFees=row[col['total fees'] ?? 10] || '';
+          const paid=row[col['paid'] ?? 11] || '';
+          const won=row[col['won'] ?? 12] || '';
+          const paidOut=row[col['paid out'] ?? 13] || '';
+          const owes=row[col['owes'] ?? 14] || '';
+          const hdcp=cleanNumberCell(hdcpCell);
+          players.push({
+            name:String(name).trim(),
+            role:String(role).trim(),
+            gender:String(gender).trim() || 'M',
+            tee:String(tee).trim(),
+            exactHandicap:hdcp,
+            money:{
+              totalFees:cleanNumberCell(totalFees) ?? 0,
+              paid:cleanNumberCell(paid) ?? 0,
+              won:cleanNumberCell(won) ?? 0,
+              paidOut:cleanNumberCell(paidOut) ?? 0,
+              owes:cleanNumberCell(owes) ?? 0
+            }
+          });
+        }
+        return players;
+      }
+
+      function readStablefordSummary(rows){
+        const idx=findRowIndex(rows,row=>String(row[0]||'').trim().toLowerCase()==='stableford');
+        if(idx<0 || idx+1>=rows.length) return null;
+        const header=rows[idx+1];
+        const data=[];
+        for(let i=idx+2;i<rows.length;i++){
+          const row=rows[i];
+          if(!row || row.length===0) break;
+          if(!row[0] || !row[0].trim()) break;
+          if(String(row[0]).trim().toLowerCase()==='round 1') break;
+          if(row.every(cell=>String(cell).trim()==='')) break;
+          data.push(row);
+        }
+        const col=header.reduce((acc,name,i)=>{acc[String(name||'').trim().toLowerCase()] = i; return acc;}, {});
+        const out=[];
+        for(const row of data){
+          const name=row[col['player'] ?? 0] || '';
+          const r1=row[col['round 1'] ?? 1] || row[col['round1'] ?? 1] || row[1];
+          const total=row[col['total'] ?? 2] || row[2];
+          const nR1=cleanNumberCell(r1);
+          const nTotal=cleanNumberCell(total);
+          if(!name || !Number.isFinite(nTotal)) continue;
+          out.push({
+            name:String(name).trim(),
+            round1:nR1 ?? nTotal,
+            total: nTotal
+          });
+        }
+        return out;
+      }
+
+      function findCourseSectionIndex(rows){
+        return findRowIndex(rows,row => {
+          const joined=row.map(c=>String(c||'').trim()).join(' ').toLowerCase();
+          return joined.includes('golf club');
+        });
+      }
+
+      function readCourseAndScores(rows){
+        const idx=findCourseSectionIndex(rows);
+        if(idx<0 || idx+1>=rows.length) return null;
+        const headerRow=rows[idx+1] || [];
+        const sIndex=headerRow.findIndex(cell => String(cell||'').trim().toLowerCase()==='s.i.' || String(cell||'').trim().toLowerCase()==='si');
+        const parIndex=headerRow.findIndex(cell => String(cell||'').trim().toLowerCase()==='par');
+        if(sIndex<0 || parIndex<0){
+          let siRowIdx = idx+1;
+          let parRowIdx=-1;
+          for(let i=idx+1;i<rows.length;i++){
+            const row=rows[i];
+            const first=String(row[0]||'').trim().toLowerCase();
+            if(first==='s.i.' || first==='si') {siRowIdx=i;}
+            if(first==='par') {parRowIdx=i; break;}
+          }
+          if(parRowIdx<0) return null;
+          const siRow=rows[siRowIdx];
+          const parRow=rows[parRowIdx];
+          const offset=3;
+          const holes=[];
+          for(let i=offset;i<parRow.length;i++){
+            const si=cleanNumberCell(siRow[i]);
+            const par=cleanNumberCell(parRow[i]);
+            if(!Number.isFinite(par) || !Number.isFinite(si)) continue;
+            holes.push({
+              index: holes.length+1,
+              par,
+              si
+            });
+          }
+          const players=[];
+          const usedStablefordRows=new Set();
+          for(let i=parRowIdx+1;i<rows.length;i++){
+            const row=rows[i];
+            const first=String(row[0]||'').trim();
+            if(!first) break;
+            if(/stableford/i.test(first)) continue;
+            const tee=String(row[1]||'').trim();
+            const hdcp=cleanNumberCell(row[2]);
+            if(!Number.isFinite(hdcp)) continue;
+            const name=first.trim();
+            const strokes=[];
+            for(let j=3;j<row.length;j++){
+              const n=cleanNumberCell(row[j]);
+              if(n==null) strokes.push(null);
+              else strokes.push(n);
+            }
+            while(strokes.length<holes.length) strokes.push(null);
+            let sdRowIdx=-1;
+            for(let k=i+1;k<rows.length;k++){
+              const r=rows[k];
+              if(!r || !r.length) break;
+              const f0=String(r[0]||'').trim();
+              const f1=String(r[1]||'').trim().toLowerCase();
+              if(!f0 && f1==='stableford'){
+                sdRowIdx=k; break;
+              }
+              if(!f0){
+                break;
+              }
+            }
+            let stablefordTotal=null;
+            let stablefordPerHole=null;
+            if(sdRowIdx>=0){
+              usedStablefordRows.add(sdRowIdx);
+              const rowSd=rows[sdRowIdx];
+              stablefordTotal=cleanNumberCell(rowSd[rowSd.length-1]);
+              stablefordPerHole=readStablefordPerHole(rowSd);
+            }
+            players.push({
+              name,
+              tee,
+              handicap:hdcp,
+              strokes,
+              stablefordTotal,
+              stablefordPerHole
+            });
+          }
+          return {holes,players};
+        }else{
+          const offset = Math.min(sIndex,parIndex);
+          const siRow = rows.find(r => String(r[0]||'').trim().toLowerCase()==='s.i.' || String(r[0]||'').trim().toLowerCase()==='si') || rows[idx+2];
+          const parRow = rows.find(r => String(r[0]||'').trim().toLowerCase()==='par') || rows[idx+3];
+          const holes=[];
+          for(let i=offset;i<parRow.length;i++){
+            const si=cleanNumberCell(siRow[i]);
+            const par=cleanNumberCell(parRow[i]);
+            if(!Number.isFinite(par) || !Number.isFinite(si)) continue;
+            holes.push({
+              index:holes.length+1,
+              par,
+              si
+            });
+          }
+          const startIdx=rows.indexOf(parRow)+1;
+          const players=[];
+          for(let i=startIdx;i<rows.length;i++){
+            const row=rows[i];
+            if(!row || row.length<4) break;
+            const name=row[0]||'';
+            if(!name || !/[a-z]/i.test(name)) break;
+            const tee=row[1]||'';
+            const hdcp=cleanNumberCell(row[2]);
+            const strokes=[];
+            for(let j=offset;j<row.length;j++){
+              const n=cleanNumberCell(row[j]);
+              strokes.push(Number.isFinite(n) ? n : null);
+            }
+            while(strokes.length<holes.length) strokes.push(null);
+            players.push({
+              name:String(name).trim(),
+              tee:String(tee).trim(),
+              handicap:hdcp,
+              strokes,
+              stablefordTotal:null,
+              stablefordPerHole:null
+            });
+          }
+          return {holes,players};
+        }
+      }
+
+      function readStablefordPerHole(row){
+        let start = -1;
+
+        // Find the "Stableford" cell in the row
+        for (let i = 0; i < row.length; i++) {
+          if (String(row[i]).trim().toLowerCase() === 'stableford') {
+            start = i;
+            break;
+          }
+        }
+        if (start < 0) return null;
+
+        const vals = [];
+
+        // Skip the next cell after "Stableford" – this is the playing handicap
+        let j = start + 2;
+
+        // Collect per-hole Stableford for 18 holes
+        for (; j < row.length && vals.length < 18; j++) {
+          const raw = String(row[j] || '').trim();
+          if (raw === '') continue;
+
+          // P / p / "\" = pick-up → treat as 0 points
+          if (raw === 'P' || raw === 'p' || raw === '\\') {
+            vals.push(0);
+            continue;
+          }
+
+          const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
+
+          // Per-hole Stableford scores are small ints; ignore big totals like 16/17/33
+          if (Number.isFinite(n) && n >= 0 && n <= 6) {
+            vals.push(n);
+          }
+        }
+
+        // Pad to 18 holes if needed
+        while (vals.length < 18) vals.push(0);
+
+        return vals.slice(0, 18);
+      }
+
+      function parseSquabbitCSV(text){
+        const rows=text.replace(/\r/g,'').split('\n');
+        const lines=rows.map(splitSafe);
+        const gameMetaLines=lines.filter(r => r.length>=2 && /game\s*\d/i.test(String(r[0]||'')));
+        let gameName=null, gameDate=null;
+        if(gameMetaLines.length){
+          const first=gameMetaLines[0];
+          gameName=String(first[0]||'').trim();
+          gameDate=String(first[1]||'').trim();
+        }else{
+          const titleRow=lines.find(r => r.length>=2 && /\bgolf club\b/i.test(r.join(' ')));
+          if(titleRow){
+            const maybeDate = titleRow.find(c => /\d{4}/.test(String(c)));
+            gameName=String(titleRow[0]||'').trim();
+            gameDate=maybeDate ? String(maybeDate).trim() : null;
+          }
+        }
+        const players=readPlayersSection(lines) || [];
+        const summary=readStablefordSummary(lines) || [];
+        const courseData=readCourseAndScores(lines);
         return {
-          players: players.map(function(p){
-            return { name:p.name, gender:p.gender, handicap:p.handicap, points: totals[p.name] || 0, back9: (holeData[p.name] && holeData[p.name].back9) || 0, perHole: (holeData[p.name] && holeData[p.name].perHole) || [] };
-          })
+          gameName,
+          gameDate,
+          players,
+          summary,
+          courseData
         };
       }
 
-      // ---------- App ----------
-      function App(){
-        const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic
-        const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
-        const [client,setClient] = useState(null);
-        const [statusMsg,setStatusMsg] = useState('Connecting…');
-
-        const BUCKET='den-events';
-        const PREFIX='events';
-        const [shared,setShared]=useState([]);
-        const [sharedGroups,setSharedGroups]=useState([]);
-
-        const [eventName,setEventName]=useState('Den Society Meeting');
-        const [players,setPlayers]=useState([]);
-        const [season,setSeason]=useState({});
-        const fileInputRef = useRef(null);
-
-        useEffect(()=>{ // init supabase + fetch
-          let cancelled=false;
-          async function boot(){
-            try{
-              if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,250); return; }
-              const c = window.supabase.createClient(defaultURL, defaultKEY, { auth:{ persistSession:false }});
-              if(cancelled) return; setClient(c);
-              const probe = await c.from('season_standings').select('name').limit(1);
-              if(cancelled) return;
-              if(probe.error){ setStatusMsg('Error: '+probe.error.message); }
-              else{ setStatusMsg('Connected'); await refreshShared(c); await fetchSeasonWith(c); }
-            }catch(e){ if(!cancelled) setStatusMsg('Error: '+(e?.message||e)); }
+      function buildPerPlayerSummary(parsed){
+        const {players,summary,courseData}=parsed;
+        const byNameSummary = new Map();
+        for(const s of summary){
+          byNameSummary.set(s.name.toLowerCase(),s);
+        }
+        const byNameScores = new Map();
+        if(courseData){
+          for(const p of courseData.players){
+            byNameScores.set(p.name.toLowerCase(),p);
           }
-          boot();
-          return ()=>{cancelled=true};
-        },[]);
-
-        async function refreshShared(c){
-          c=c||client; if(!c) return;
-          const r = await c.storage.from(BUCKET).list(PREFIX, { limit:1000, sortBy:{column:'name', order:'asc'} });
-          if(r.error) return;
-          const data=(r.data||[])
-            .filter(x=>!x.name.startsWith('.') && /\.csv$/i.test(x.name))
-            .map(x=>({ name:x.name.replace(/\.csv$/i,''), file:x.name, path: PREFIX+'/'+x.name }));
-          setShared(data);
-          setSharedGroups(groupByYear(data));
         }
-        function groupByYear(files){
-          const groups={};
-          for(const f of files){ const m=f.name.match(/(20\d{2})/); const year=m?m[1]:'Unknown'; (groups[year]=groups[year]||[]).push(f); }
-          return Object.keys(groups).sort((a,b)=>b.localeCompare(a)).map(y=>({year:y, events:groups[y].sort((a,b)=>a.name.localeCompare(b.name))}));
+        const out=[];
+        const allNamesSet=new Set();
+        for(const p of players){
+          allNamesSet.add(p.name);
         }
-        async function loadShared(item){
-          if(!client) return;
-          const r=await client.storage.from(BUCKET).download(item.path);
-          if(r.error){ alert('Download failed: '+r.error.message); return; }
-          const text=await r.data.text();
-          const parsed=parseSquabbitCSV(text);
-          setPlayers(parsed.players||[]);
-          setEventName(item.name);
-          setView('event');
-          toast('Event loaded');
+        for(const s of summary){
+          allNamesSet.add(s.name);
         }
+        if(courseData){
+          for(const p of courseData.players){
+            allNamesSet.add(p.name);
+          }
+        }
+        for(const name of allNamesSet){
+          const key=name.toLowerCase();
+          const p=players.find(x=>x.name.toLowerCase()===key);
+          const s=byNameSummary.get(key);
+          const sc=byNameScores.get(key);
+          const points=s?.total ?? sc?.stablefordTotal ?? s?.round1 ?? null;
+          let front9=null,back9=null;
+          let perHole=null;
+          if(sc && sc.stablefordPerHole){
+            perHole=sc.stablefordPerHole.slice(0,18);
+            const f=perHole.slice(0,9).reduce((a,b)=>a+(b||0),0);
+            const b=perHole.slice(9,18).reduce((a,b)=>a+(b||0),0);
+            front9=f; back9=b;
+          }
+          out.push({
+            name,
+            role:p?.role || '',
+            gender:p?.gender || 'M',
+            tee:p?.tee || sc?.tee || '',
+            startExact:p?.exactHandicap ?? sc?.handicap ?? null,
+            money:p?.money || {totalFees:0,paid:0,won:0,paidOut:0,owes:0},
+            points,
+            front9,
+            back9,
+            perHole,
+            strokes:sc?.strokes || null
+          });
+        }
+        return out.filter(r=>r.points!=null);
+      }
 
-        // computed event outcomes
-        const computed = useMemo(()=>{
-          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
-          if(!base.length) return [];
-          const groups=[]; const used=new Set();
-          for(const r of base){ if(used.has(r.idx)) continue; const grpIdxs=base.filter(x=>x.points===r.points).map(x=>x.idx); grpIdxs.forEach(id=>used.add(id)); groups.push(grpIdxs); }
-          const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
-          let best=[topGroup[0]];
-          for(let k=1;k<topGroup.length;k++){ const cmp=compareByCountback(topGroup[k],best[0]); if(cmp>0) best=[topGroup[k]]; else if(cmp===0) best.push(topGroup[k]); }
-          const winnerIdxSet=new Set(best.map(r=>r.idx));
+      function computeCourseParAndRating(courseData){
+        if(!courseData || !courseData.holes || !courseData.holes.length) return null;
+        const coursePar = courseData.holes.reduce((a,h)=>a+(h.par||0),0);
+        const holesByPar = {3:[],4:[],5:[]};
+        for(const h of courseData.holes){
+          if(holesByPar[h.par]) holesByPar[h.par].push(h);
+        }
+        return { coursePar, holesByPar };
+      }
 
-          let pos=1; const out=[];
-          for(let gIdx=0; gIdx<groups.length; gIdx++){
-            const g=groups[gIdx]; const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
-            for(const i of g){
-              const r=rows.find(x=>x.idx===i);
-              const isWinner=winnerIdxSet.has(i) && (gIdx===0);
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
-              out.push({...r, position:start, leaguePoints:ptsValue, isWinner, nextExact:res.nextExact, nextPlaying:res.nextPlaying});
+      function computeCSI(allScores,coursePar){
+        if(!allScores.length || !Number.isFinite(coursePar)) return null;
+        const n=allScores.length;
+        const sum=allScores.reduce((a,b)=>a+b,0);
+        const mean=sum/n;
+        let variance=0;
+        for(const s of allScores){
+          variance+=Math.pow(s-mean,2);
+        }
+        variance/=n;
+        const sd=Math.sqrt(variance);
+        const csi = sd ? (coursePar - mean)*10/sd : 0;
+        return { mean, sd, csi };
+      }
+
+      function approximateStrokeScoreFromPoints(points,coursePar=72){
+        if(points==null) return null;
+        const diff = 36 - points;
+        return coursePar + diff;
+      }
+
+      function computeNewExactHandicap(startExact,gender,points,back9,isWinner){
+        let exact=startExact;
+        if(!Number.isFinite(exact)) return { newExact:null, movement:0 };
+        const target=gender==='F'?'F':'M';
+        const s = points ?? 36;
+        let movement=0;
+        if(isWinner && s>=36){
+          movement -= 1.0;
+        }
+        if(s>36){
+          movement -= (s-36)*0.1;
+        }else if(s<36){
+          movement += Math.min(36-s,4)*0.1;
+        }
+        let newExact=exact+movement;
+        newExact=Math.round(newExact*10)/10;
+        movement=Math.round(movement*10)/10;
+        return { newExact, movement };
+      }
+
+      function compareByCountback(a,b){
+        if(a.points!=null && b.points!=null){
+          if(a.points!==b.points) return b.points-a.points;
+          if(a.back9!=null && b.back9!=null && a.back9!==b.back9){
+            return b.back9-a.back9;
+          }
+          if(a.perHole && b.perHole){
+            for(let i=a.perHole.length-1;i>=0;i--){
+              const av=a.perHole[i]||0;
+              const bv=b.perHole[i]||0;
+              if(av!==bv) return bv-av;
             }
-            pos+=g.length;
-          }
-          return out.sort((a,b)=>a.position-b.position);
-        },[players]);
-
-        async function fetchSeasonWith(c){
-          const r = await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(r.error){ setStatusMsg('Error: '+r.error.message); return; }
-          const data=r.data||[]; const map={};
-          for(const rec of data){
-            if(isTeamLike(rec.name)) continue;
-            let bph=[];
-            if(Array.isArray(rec.best_per_hole)) bph=rec.best_per_hole;
-            else if(typeof rec.best_per_hole==='string'){ try{ bph=JSON.parse(rec.best_per_hole||'[]')||[]; }catch(e){ bph=[]; } }
-            map[rec.name]={ name:rec.name, totalPoints:rec.total_points||0, events:rec.events||0, bestEventPoints:rec.best_event_points??0, bestHolePoints:rec.best_hole_points??0, eclecticTotal:rec.eclectic_total??0, bestPerHole:(bph||[]).map(n=>Number(n)||0) };
-          }
-          setSeason(map);
-        }
-
-        async function addEventToSeason(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          const next={ ...season };
-          for(const r of computed){
-            if(isTeamLike(r.name)) continue;
-            const prev=next[r.name]||{name:r.name,totalPoints:0,events:0,bestPerHole:Array(18).fill(0),eclecticTotal:0,bestEventPoints:0,bestHolePoints:0};
-            const eventPerHole=(r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0)));
-            const bestPerHole=Array.from({length:18},(_,idx)=>Math.max(prev.bestPerHole[idx]||0,eventPerHole[idx]||0));
-            const eclecticTotal=bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
-            const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
-            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max.apply(null,[0].concat(eventPerHole)));
-            next[r.name]={ name:r.name, totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), events:(prev.events||0)+1, bestEventPoints:nextBestEvent, bestHolePoints:nextBestHole, eclecticTotal, bestPerHole };
-          }
-          setSeason(next);
-          if(client){
-            const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
-            for(const r of vals){
-              rows.push({ name:r.name, total_points:r.totalPoints|0, events:r.events|0, best_event_points:(r.bestEventPoints??0)|0, best_hole_points:(r.bestHolePoints??0)|0, eclectic_total:(r.eclecticTotal??0)|0, best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0) });
-            }
-            const u = await client.from('season_standings').upsert(rows,{onConflict:'name'});
-            if(u.error){ toast('Error: '+u.error.message); } else { toast('Event added to season ✓'); }
           }
         }
-        async function addEventToSeasonGuarded(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          const ok = window.confirm('Only Admin should add events.\n\nAre you admin?');
-          if(!ok){ toast('Action cancelled'); setView('home'); return; }
-          await addEventToSeason();
-        }
-        async function resetSeasonStandings(){
-          const ok = window.confirm('This will CLEAR Season Standings and Eclectic totals.\nEvent CSVs in Supabase storage are kept.\n\nAre you admin and sure?');
-          if(!ok){ toast('Reset cancelled'); setView('home'); return; }
-          setSeason({});
-          if(client){
-            const del = await client.from('season_standings').delete().neq('name','');
-            if(del.error){ toast('Error: '+del.error.message); }
-            else{ toast('Season standings reset ✓'); }
-          } else { toast('Season cleared locally'); }
-        }
-        function exportEventCSV(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
-          computed.forEach(r=>rows.push([r.name,r.gender,Math.round(r.startExact),r.points,r.back9,r.position,r.leaguePoints,r.nextExact.toFixed(1),r.nextPlaying]));
-          downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows);
-        }
+        return a.name.localeCompare(b.name);
+      }
 
-        // Views UI
-        function Header(){
-          return (
-            <header className="hide-print rounded-2xl p-4 border border-squab-900 bg-squab-800 text-white">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h1 className="text-xl md:text-2xl font-bold tracking-tight">Den Society — League & Eclectic</h1>
-                  <p className="text-xs/5 text-white/90">Supabase: {statusMsg}</p>
-                </div>
-                <span className="hidden sm:inline-flex chip border-white/30 bg-white/10 text-white">{eventName||'Untitled Event'}</span>
-              </div>
-            </header>
-          );
+      function buildFinalReport(parsed){
+        const {gameName,gameDate,courseData}=parsed;
+        const perPlayer=buildPerPlayerSummary(parsed);
+        const courseInfo=computeCourseParAndRating(courseData);
+        const coursePar=courseInfo?.coursePar ?? 72;
+        for(const p of perPlayer){
+          p.strokeScore=approximateStrokeScoreFromPoints(p.points,coursePar);
         }
-        function Home(){
-          const [open,setOpen]=useState(true);
-          const canAct = computed.length>0;
-          return (
-            <section className="rounded-2xl p-3 md:p-4 panel-mint shadow-sm">
-              <button
-                type="button"
-                className="w-full bg-white text-neutral-900 border border-squab-300 rounded-xl px-4 py-3 flex items-center justify-between"
-                onClick={()=>setOpen(v=>!v)}
-                aria-expanded={open?'true':'false'}
-              >
-                <span className="font-semibold">Menu</span>
-                <span className={`transition-transform ${open?'rotate-180':''}`}>▾</span>
-              </button>
-              <div className={`overflow-hidden transition-all ${open?'max-h-[2200px]':'max-h-0'}`}>
-                <div className="mt-3 grid gap-2">
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('past')}>View Past Golf Events</button>
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>{
-                    if (!computed || computed.length === 0) { toast('Load a past event or import a CSV first'); setView('home'); return; }
-                    setView('ratings');
-                  }}>View Player Ratings</button>
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
-
-                  <button className="w-full text-left rounded-xl border border-squab-300 bg-white px-3 py-2" onClick={()=>{ fileInputRef.current && fileInputRef.current.click(); }}>Import CSV</button>
-                  <input
-                    id="importCsv"
-                    name="importCsv"
-                    aria-label="Import Squabbit CSV"
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv"
-                    className="hidden"
-                    onChange={async e=>{
-                      try{
-                        const f=e.target.files&&e.target.files[0]; if(!f) return;
-                        const text=await f.text();
-                        const parsed=parseSquabbitCSV(text);
-                        setPlayers(parsed.players||[]);
-                        setEventName((f.name||'').replace(/\.[^.]+$/,''));
-                        setView('event');
-                        e.target.value='';
-                      }catch(err){ toast('Bad CSV'); console.error(err); }
-                    }}
-                  />
-
-                  <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={addEventToSeasonGuarded} disabled={!canAct}>Add Event → Season</button>
-                  <button className="w-full text-left rounded-xl border border-red-200 bg-white px-3 py-2 text-red-700" onClick={resetSeasonStandings}>Reset Season Standings</button>
-                  <button className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-300 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`} onClick={exportEventCSV} disabled={!canAct}>Download CSV</button>
-
-                  {/* Only the external Help link remains */}
-                  <a href="./help.html" className="w-full block text-left rounded-xl border border-squab-300 bg-white px-3 py-2" target="_blank" rel="noopener">
-                    Help / How it works (full page)
-                  </a>
-                </div>
-              </div>
-            </section>
-          );
+        const validForCSI=perPlayer.filter(p=>p.strokeScore!=null);
+        const allScores=validForCSI.map(p=>p.strokeScore);
+        const csi=computeCSI(allScores,coursePar);
+        const sorted=[...perPlayer].sort(compareByCountback);
+        const winner=sorted[0] || null;
+        const withHandicapAdj=[];
+        for(let i=0;i<sorted.length;i++){
+          const p=sorted[i];
+          const isWinner = (winner && p.name===winner.name);
+          const res=computeNewExactHandicap(p.startExact,p.gender,p.points,p.back9,isWinner);
+          withHandicapAdj.push({
+            ...p,
+            position:i+1,
+            newExact:res.newExact,
+            handicapMovement:res.movement
+          });
         }
+        const positions=withHandicapAdj;
+        return {
+          gameName,
+          gameDate,
+          coursePar,
+          csi,
+          positions,
+          winner,
+          courseData
+        };
+      }
 
-        // Past events
-        function PastEvents(){
-          return (
-            <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-300 shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-squab-900">Past Den Society Golf Games</h2>
-                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
-              </div>
-              {sharedGroups.length===0 && <div className="text-sm text-neutral-600 p-2">No shared CSVs yet.</div>}
-              {sharedGroups.map(group=> (
-                <div key={group.year} className="mb-3">
-                  <label
-                    htmlFor={`events-${group.year}`}
-                    className="text-xs text-neutral-600 mb-1 block"
-                  >
-                    {group.year}
-                  </label>
-                  <select
-                    id={`events-${group.year}`}
-                    name={`events-${group.year}`}
-                    className="w-full rounded-xl border border-squab-300 px-3 py-2 bg-white"
-                    onChange={async e=>{
-                      const idx=e.target.value;
-                      if(idx==='') return;
-                      const item=group.events[Number(idx)];
-                      await loadShared(item);
-                    }}
-                  >
-                    <option value="">Select an event…</option>
-                    {group.events.map((item,i)=> (
-                      <option key={item.path} value={i}>{item.name}</option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </section>
-          );
-        }
-        function EventScreen(){
-          return (
-            <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-300 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Event — {eventName || 'Selected Event'}</h2>
-                <button className="btn border border-squab-300" onClick={()=>setView('past')}>Back</button>
-              </div>
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="sticky top-0 bg-white z-10">
-                    <tr className="border-b border-squab-300 text-left">
-                      <th>#</th><th>Name</th><th>Handicap</th><th>Stableford</th><th>Back9</th><th>Pts</th><th>New Handicap</th>
-                    </tr>
-                  </thead>
-                  <tbody className="[&_tr:nth-child(even)]:bg-squab-50">
-                    {computed.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-600">Pick an event to see players.</td></tr>)}
-                    {computed.map((r,i)=>(
-                      <tr key={i} className="border-b border-squab-300">
-                        <td>{r.position}</td>
-                        <td className="whitespace-nowrap">{r.name}</td>
-                        <td>{Math.round(r.startExact)}</td>
-                        <td>{r.points}</td>
-                        <td>{r.back9}</td>
-                        <td>{r.leaguePoints}</td>
-                        <td>{r.nextPlaying}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-neutral-600 mt-2">Ties share the highest slot. Winner by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st.</p>
-            </section>
-          );
-        }
-        function Ratings(){
-          const defaultMen=[4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-          const defaultWomen=[4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
-          const ratingLabel = avg => avg>=3?'Excellent':avg>=2.5?'Good':avg>=2?'Solid':avg>=1.5?'Needs work':'Struggle';
-          const badgeClass = avg => avg>=3?'bg-emerald-100 text-emerald-800':avg>=2.5?'bg-emerald-50 text-emerald-700':avg>=2?'bg-neutral-100 text-neutral-800':avg>=1.5?'bg-amber-100 text-amber-800':'bg-red-100 text-red-800';
-          const eventParAverages=(perHole,pars)=>{ const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}}; for(let i=0;i<Math.min(18,perHole.length);i++){ const pts=Number(perHole[i])||0; const par=Number(pars[i])||4; if(sums[par]){ sums[par].s+=pts; sums[par].c++; }} const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0; return {p3:avg(3),p4:avg(4),p5:avg(5)}; };
+      function Dropzone({onFileSelected}){
+        const [dragOver,setDragOver]=useState(false);
 
-          useEffect(()=>{ if (!Array.isArray(computed) || computed.length === 0) { toast('Load a past event or import a CSV first'); setView('home'); } }, [computed.length]);
+        const onChange=(e)=>{
+          const file=e.target.files[0];
+          if(file) onFileSelected(file);
+        };
 
-          const ratings = React.useMemo(()=>{
-            const out=[];
-            for(const r of computed){
-              const pars=(r.gender==='F')?defaultWomen:defaultMen;
-              const av=eventParAverages(r.perHole||[],pars);
-              out.push({name:r.name,p3:to1(av.p3),p4:to1(av.p4),p5:to1(av.p5),total:to1(av.p3+av.p4+av.p5)});
-            }
-            return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-          },[computed]);
+        const handleDrop=(e)=>{
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+          const file=e.dataTransfer.files[0];
+          if(file) onFileSelected(file);
+        };
 
-          return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Player Ratings — {eventName||'This Event'}</h2>
-                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
-              </div>
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-squab-300 text-left">
-                      <th>Name</th>
-                      <th>Par-3 avg</th><th>Par-3 rating</th>
-                      <th>Par-4 avg</th><th>Par-4 rating</th>
-                      <th>Par-5 avg</th><th>Par-5 rating</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ratings.length===0 && (<tr><td colSpan="7" className="py-3 text-neutral-600">Import a CSV or pick one from Past Events to see ratings.</td></tr>)}
-                    {ratings.map(r=> (
-                      <tr key={r.name} className="border-b border-squab-300">
-                        <td className="font-medium">{r.name}</td>
-                        <td>{r.p3.toFixed(1)}</td>
-                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>{ratingLabel(r.p3)}</span></td>
-                        <td>{r.p4.toFixed(1)}</td>
-                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>{ratingLabel(r.p4)}</span></td>
-                        <td>{r.p5.toFixed(1)}</td>
-                        <td><span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>{ratingLabel(r.p5)}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          );
-        }
-        function Standings(){
-          const list = Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
-          return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Season Standings</h2>
-                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
-              </div>
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm"><thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th></tr></thead>
-                  <tbody>
-                    {list.length===0 && <tr><td colSpan="7" className="py-3 text-neutral-600">No season data found.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-300"><td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td><td>{r.bestEventPoints??0}</td><td>{r.bestHolePoints??0}</td><td>{r.eclecticTotal??0}</td></tr>))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          );
-        }
-        function Eclectic(){
-          const list = Object.values(season).filter(r=>!isTeamLike(r.name)).sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name));
-          return (
-            <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-300 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Eclectic Leaderboard</h2>
-                <button className="btn border border-squab-300" onClick={()=>setView('home')}>Back</button>
-              </div>
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead><tr className="border-b border-squab-300 text-left"><th>Rank</th><th>IName</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
-                  <tbody>
-                    {list.length===0 && <tr><td colSpan="21" className="py-3 text-neutral-600">No eclectic yet.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-300"><td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal??0}</td>{(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}</tr>))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          );
-        }
+        const handleDragOver=(e)=>{
+          e.preventDefault();
+          e.stopPropagation();
+          if(!dragOver) setDragOver(true);
+        };
+
+        const handleDragLeave=(e)=>{
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+        };
 
         return (
-          <div className="min-h-screen p-4 sm:p-6">
-            <div className="max-w-4xl mx-auto space-y-4">
-              <Header />
-              {view==='home' && <Home />}
-              {view==='past' && <PastEvents />}
-              {view==='event' && <EventScreen />}
-              {view==='ratings' && <Ratings />}
-              {view==='standings' && <Standings />}
-              {view==='eclectic' && <Eclectic />}
-            </div>
-          </div>
+          React.createElement("label",{
+            className:"dropzone"+(dragOver?" dragover":""),
+            onDrop:handleDrop,
+            onDragOver:handleDragOver,
+            onDragLeave:handleDragLeave
+          },
+            React.createElement("div",{className:"dropzone-icon"},
+              React.createElement("span",null,"\u21e9")
+            ),
+            React.createElement("div",{className:"dropzone-content"},
+              React.createElement("div",{className:"dropzone-title"},"Drop Squabbit CSV here or click to browse"),
+              React.createElement("div",{className:"dropzone-sub"},"We\u2019ll parse players, Stableford points, and hole-by-hole scores."),
+              React.createElement("div",{className:"dropzone-meta"},"Expected: the raw Squabbit CSV export for a single Den Society game.")
+            ),
+            React.createElement("input",{
+              type:"file",
+              accept:".csv,text/csv",
+              style:{display:"none"},
+              onChange
+            })
+          )
         );
       }
 
-      ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+      function SummaryCard({report,fileName}){
+        if(!report){
+          return (
+            React.createElement("div",{className:"empty-state"},
+              "Upload a Squabbit game CSV to see Den Society analysis: winner, CSI, handicap changes, and par-type performance for everyone."
+            )
+          );
+        }
+        const {gameName,gameDate,coursePar,csi,winner,positions}=report;
+        const numPlayers = positions.length;
+        const fieldAvg = csi?.mean ?? null;
+        return (
+          React.createElement("div",{className:"summary-card"},
+            React.createElement("div",{className:"summary-main"},
+              React.createElement("div",null,
+                React.createElement("div",{className:"summary-main-label"},"Game"),
+                React.createElement("div",{style:{fontSize:"16px",fontWeight:600}},
+                  gameName || (fileName || "Game from CSV")
+                ),
+                gameDate && React.createElement("div",{style:{fontSize:"11px",color:"#a0aec0",marginTop:2}},gameDate)
+              ),
+              React.createElement("div",{style:{textAlign:"right"}},
+                React.createElement("div",{className:"summary-main-label"},"Winner"),
+                winner ? (
+                  React.createElement("div",{className:"summary-main-number"},
+                    winner.name
+                  )
+                ): (
+                  React.createElement("div",{className:"summary-main-number"},"\u2014")
+                ),
+                winner && React.createElement("div",{style:{fontSize:"11px",color:"#9ae6b4",marginTop:2}},
+                  winner.points!=null ? `${winner.points} pts` : "Stableford"
+                )
+              )
+            ),
+            React.createElement("div",{className:"flex-row"},
+              React.createElement("div",{className:"pill-small"},
+                React.createElement("strong",null,numPlayers || "\u2014")," players \u2022 Course par ",coursePar || "?"
+              ),
+              csi && React.createElement("div",{className:"pill-small"},
+                "CSI ",
+                csi.csi.toFixed(1),
+                csi.csi < -2 ? " (tough day)" : csi.csi > 2 ? " (easy day)" : " (normal)"
+              ),
+              fieldAvg!=null && React.createElement("div",{className:"pill-small"},
+                "Field avg ",
+                fieldAvg.toFixed(1)," strokes"
+              )
+            ),
+            React.createElement("div",{className:"summary-sub"},
+              "CSI is a rough difficulty index: negative = course playing ",React.createElement("strong",null,"harder"),", positive = playing ",React.createElement("strong",null,"easier"),
+              " than par for the field."
+            )
+          )
+        );
+      }
+
+      function PositionsTable({report}){
+        if(!report || !report.positions.length){
+          return (
+            React.createElement("div",{className:"empty-state"},
+              "No positions to show yet. Once you upload a game CSV, we\u2019ll list everyone, their Stableford, stroke score, countback and handicap movement."
+            )
+          );
+        }
+        const {positions,coursePar}=report;
+        return (
+          React.createElement("div",{className:"table-wrap"},
+            React.createElement("table",null,
+              React.createElement("thead",null,
+                React.createElement("tr",null,
+                  React.createElement("th",null,"Pos"),
+                  React.createElement("th",null,"Player"),
+                  React.createElement("th",null,"Pts"),
+                  React.createElement("th",null,"Front"),
+                  React.createElement("th",null,"Back"),
+                  React.createElement("th",null,"Stroke"),
+                  React.createElement("th",null,"Start Hcp"),
+                  React.createElement("th",null,"New Hcp"),
+                  React.createElement("th",null,"\u0394"),
+                  React.createElement("th",null,"Notes")
+                )
+              ),
+              React.createElement("tbody",null,
+                positions.map(p=>{
+                  const isWinner=p.position===1;
+                  const cut = p.points!=null && p.points<30;
+                  const strokeBadgeClass =
+                    p.strokeScore!=null
+                      ? (p.strokeScore<=coursePar-2 ? "score-badge good"
+                         : p.strokeScore>=coursePar+4 ? "score-badge bad"
+                         : "score-badge")
+                      : "";
+                  const movementTag =
+                    p.handicapMovement<0 ? "chip win"
+                    : p.handicapMovement>0 ? "chip cut"
+                    : "chip";
+                  const movementText =
+                    p.handicapMovement<0 ? `${p.handicapMovement.toFixed(1)} (cuts)`
+                    : p.handicapMovement>0 ? `+${p.handicapMovement.toFixed(1)} (goes up)`
+                    : "No change";
+                  return React.createElement("tr",{key:p.name, className: isWinner?"highlight":""},
+                    React.createElement("td",null,
+                      React.createElement("span",{className:"pos-badge"+(isWinner?" win":cut?" cut":"")},
+                        p.position
+                      )
+                    ),
+                    React.createElement("td",null,
+                      React.createElement("div",null,p.name),
+                      React.createElement("div",{style:{fontSize:"10px",color:"#a0aec0",marginTop:1}},
+                        p.role ? p.role : p.gender==='F' ? "Lady" : "Gent",
+                        p.tee ? ` \u2022 ${p.tee}` : ""
+                      )
+                    ),
+                    React.createElement("td",null,
+                      p.points!=null
+                        ? React.createElement("span",{className:"score-badge"+(p.points>=36?" good":p.points<=30?" bad":"")},p.points)
+                        : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      p.front9!=null ? p.front9 : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      p.back9!=null ? p.back9 : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      p.strokeScore!=null
+                        ? React.createElement("span",{className:strokeBadgeClass},p.strokeScore)
+                        : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      p.startExact!=null ? p.startExact.toFixed(1) : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      p.newExact!=null ? p.newExact.toFixed(1) : "\u2014"
+                    ),
+                    React.createElement("td",null,
+                      React.createElement("span",{className:movementTag},movementText)
+                    ),
+                    React.createElement("td",null,
+                      React.createElement("div",{className:"tag-row"},
+                        isWinner && React.createElement("span",{className:"tag-pill strong"},"Winner"),
+                        p.points>=36 && React.createElement("span",{className:"tag-pill strong"},"Played well"),
+                        cut && React.createElement("span",{className:"tag-pill"},"Below 30 pts"),
+                        p.back9!=null && p.front9!=null && p.back9>p.front9 && React.createElement("span",{className:"tag-pill"},"Stronger home")
+                      )
+                    )
+                  );
+                })
+              )
+            )
+          )
+        );
+      }
+
+      function CourseInsight({report}){
+        if(!report || !report.courseData || !report.courseData.holes.length){
+          return (
+            React.createElement("div",{className:"empty-state"},
+              "Course insight will appear here if the CSV contains hole-by-hole strokes and Stableford for each player."
+            )
+          );
+        }
+        const {courseData,positions,coursePar}=report;
+        const parCounts={3:0,4:0,5:0};
+        for(const h of courseData.holes){
+          if(parCounts[h.par]!=null) parCounts[h.par]++;
+        }
+        const allPerHole = positions
+          .filter(p=>Array.isArray(p.perHole) && p.perHole.length>=18)
+          .map(p=>p.perHole);
+        const holeTotals = courseData.holes.map((h,i)=>{
+          const pts = allPerHole.map(row=>row[i]||0);
+          const playedPar = pts.reduce((a,b)=>a+(b||0),0) / Math.max(pts.length || 1,1);
+          return {
+            index:h.index,
+            par:h.par,
+            si:h.si,
+            avgStableford:playedPar
+          };
+        });
+        const parTypeSummary = {3:{points:0,count:0},4:{points:0,count:0},5:{points:0,count:0}};
+        for(const hs of allPerHole){
+          courseData.holes.forEach((h,idx)=>{
+            const pts = hs[idx] || 0;
+            if(parTypeSummary[h.par]){
+              parTypeSummary[h.par].points += pts;
+              parTypeSummary[h.par].count++;
+            }
+          });
+        }
+        const parTypeAvg = {};
+        [3,4,5].forEach(par=>{
+          const s=parTypeSummary[par];
+          parTypeAvg[par] = s.count ? (s.points/s.count) : null;
+        });
+        const worstHole = holeTotals
+          .filter(h=>h.avgStableford!=null)
+          .slice()
+          .sort((a,b)=>a.avgStableford-b.avgStableford)[0];
+        const bestHole = holeTotals
+          .filter(h=>h.avgStableford!=null)
+          .slice()
+          .sort((a,b)=>b.avgStableford-a.avgStableford)[0];
+
+        return (
+          React.createElement("div",null,
+            React.createElement("div",{className:"section-title"},"Course Insight"),
+            React.createElement("div",{className:"section-sub"},
+              "How Den played this course by par type and stroke index."
+            ),
+            React.createElement("div",{className:"flex-row"},
+              React.createElement("div",{className:"pill-small"},
+                "Par breakdown: ",
+                parCounts[3],"x Par 3 \u2022 ",
+                parCounts[4],"x Par 4 \u2022 ",
+                parCounts[5],"x Par 5"
+              ),
+              React.createElement("div",{className:"pill-small"},
+                "Field size for hole stats: ",
+                allPerHole.length," cards"
+              )
+            ),
+            React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginTop:"8px"}},
+              [3,4,5].map(par => (
+                React.createElement("div",{key:par,className:"summary-card",style:{padding:"8px 9px"}},
+                  React.createElement("div",{style:{fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.08em",color:"#a0aec0",marginBottom:4}},
+                    `Par ${par}s`
+                  ),
+                  React.createElement("div",{style:{fontSize:"18px",fontWeight:700}},
+                    parTypeAvg[par]!=null ? parTypeAvg[par].toFixed(2) : "\u2014"
+                  ),
+                  React.createElement("div",{style:{fontSize:"11px",color:"#a0aec0",marginTop:2}},
+                    "Avg Stableford per hole"
+                  )
+                )
+              ))
+            ),
+            React.createElement("div",{style:{marginTop:"10px"}},
+              React.createElement("div",{className:"section-title"},"Toughest & Easiest Holes"),
+              React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}},
+                React.createElement("div",{className:"summary-card",style:{padding:"8px 9px"}},
+                  React.createElement("div",{style:{fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.08em",color:"#fbd38d",marginBottom:4}},"Toughest hole"),
+                  worstHole ? (
+                    React.createElement("div",null,
+                      React.createElement("div",{style:{fontSize:"17px",fontWeight:700}},
+                        `Hole ${worstHole.index} (Par ${worstHole.par}, SI ${worstHole.si})`
+                      ),
+                      React.createElement("div",{style:{fontSize:"11px",color:"#a0aec0",marginTop:2}},
+                        "Avg Stableford ",
+                        worstHole.avgStableford.toFixed(2),
+                        worstHole.avgStableford<1.5 ? " (beating everyone up)" : worstHole.avgStableford<2 ? " (playing tough)" : ""
+                      )
+                    )
+                  ): "\u2014"
+                ),
+                React.createElement("div",{className:"summary-card",style:{padding:"8px 9px"}},
+                  React.createElement("div",{style:{fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.08em",color:"#9ae6b4",marginBottom:4}},"Easiest hole"),
+                  bestHole ? (
+                    React.createElement("div",null,
+                      React.createElement("div",{style:{fontSize:"17px",fontWeight:700}},
+                        `Hole ${bestHole.index} (Par ${bestHole.par}, SI ${bestHole.si})`
+                      ),
+                      React.createElement("div",{style:{fontSize:"11px",color:"#a0aec0",marginTop:2}},
+                        "Avg Stableford ",
+                        bestHole.avgStableford.toFixed(2),
+                        bestHole.avgStableford>3.2 ? " (birdie fest)" : bestHole.avgStableford>2.7 ? " (playing soft)" : ""
+                      )
+                    )
+                  ): "\u2014"
+                )
+              )
+            )
+          )
+        );
+      }
+
+      function App(){
+        const [file,setFile]=useState(null);
+        const [report,setReport]=useState(null);
+        const [error,setError]=useState(null);
+        const [loading,setLoading]=useState(false);
+
+        const handleFileSelected=useCallback((f)=>{
+          setFile(f);
+          setError(null);
+          setReport(null);
+          if(!f) return;
+          const reader=new FileReader();
+          reader.onload = (e)=>{
+            try{
+              setLoading(true);
+              const text=e.target.result;
+              const parsed=parseSquabbitCSV(text);
+              const finalReport=buildFinalReport(parsed);
+              setReport(finalReport);
+            }catch(err){
+              console.error(err);
+              setError("Could not parse this CSV. Check it is the raw Squabbit export for a single game.");
+            }finally{
+              setLoading(false);
+            }
+          };
+          reader.onerror = ()=>{
+            setError("Failed to read file");
+          };
+          reader.readAsText(f);
+        },[]);
+
+        const handleClear=()=>{
+          setFile(null);
+          setReport(null);
+          setError(null);
+        };
+
+        return (
+          React.createElement("div",null,
+            React.createElement("div",{className:"header"},
+              React.createElement("div",{className:"title-wrap"},
+                React.createElement("div",{className:"logo-pill"},"DS"),
+                React.createElement("div",null,
+                  React.createElement("div",{className:"title"},"Den Society Game Analyser"),
+                  React.createElement("div",{className:"subtitle"},"Upload a Squabbit CSV, get full Den-style breakdown.")
+                )
+              ),
+              React.createElement("div",{className:"header-right"},
+                React.createElement("div",{className:"badge"},
+                  React.createElement("span",{className:"badge-dot"}),
+                  "Stableford \u2022 WHS-ish \u2022 Countback"
+                )
+              )
+            ),
+            React.createElement("div",{className:"layout"},
+              React.createElement("div",{className:"card"},
+                React.createElement("div",{className:"card-inner"},
+                  React.createElement("div",{className:"card-header"},
+                    React.createElement("div",{className:"card-title"},
+                      "1. Upload Squabbit CSV",
+                      " ",
+                      React.createElement("span",null,file ? file.name : "")
+                    ),
+                    React.createElement("div",{className:"card-actions"},
+                      file && React.createElement("button",{
+                        className:"pill-btn",
+                        onClick:handleClear
+                      },
+                        React.createElement("span",{className:"pill-btn-label"},"Clear")
+                      ),
+                      React.createElement("button",{
+                        className:"pill-btn primary",
+                        disabled:!file
+                      },
+                        loading
+                          ? React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},
+                              React.createElement("span",{className:"spinner"}),
+                              React.createElement("span",{className:"pill-btn-label"},"Analysing...")
+                            )
+                          : React.createElement("span",{className:"pill-btn-label"},"Ready to Analyse")
+                      )
+                    )
+                  ),
+                  React.createElement(Dropzone,{onFileSelected:handleFileSelected}),
+                  file && React.createElement("div",{className:"file-meta"},
+                    React.createElement("div",null,
+                      React.createElement("div",null,
+                        React.createElement("strong",null,"Selected: "),
+                        file.name
+                      ),
+                      React.createElement("div",{style:{fontSize:"11px",color:"#a0aec0",marginTop:2}},
+                        (file.size/1024).toFixed(1)," KB \u2022 ",
+                        "Last modified ",
+                        new Date(file.lastModified).toLocaleDateString()
+                      )
+                    ),
+                    React.createElement("div",null,
+                      React.createElement("span",{className:"file-tag"},"Squabbit CSV")
+                    )
+                  ),
+                  error && React.createElement("div",{className:"error"},error),
+                  React.createElement("div",{className:"footer-note"},
+                    "Built for ",
+                    React.createElement("span",null,"Den Society"),
+                    ". This does not talk to WHS directly \u2013 it\u2019s a helper to sanity-check scores, CSI feel and handicap changes."
+                  )
+                )
+              ),
+              React.createElement("div",{className:"card"},
+                React.createElement("div",{className:"card-inner"},
+                  React.createElement("div",{className:"card-header"},
+                    React.createElement("div",{className:"card-title"},"2. Game Summary"),
+                    React.createElement("div",{className:"card-actions"},
+                      React.createElement("span",{className:"pill-mini"},"Snapshot")
+                    )
+                  ),
+                  React.createElement(SummaryCard,{report,fileName:file?.name})
+                )
+              )
+            ),
+            React.createElement("div",{className:"layout",style:{marginTop:"18px"}},
+              React.createElement("div",{className:"card"},
+                React.createElement("div",{className:"card-inner"},
+                  React.createElement("div",{className:"card-header"},
+                    React.createElement("div",{className:"card-title"},"3. Positions & Handicap Movement"),
+                    React.createElement("div",{className:"card-actions"},
+                      React.createElement("span",{className:"pill-mini"},"Countback applied")
+                    )
+                  ),
+                  React.createElement(PositionsTable,{report})
+                )
+              ),
+              React.createElement("div",{className:"card"},
+                React.createElement("div",{className:"card-inner"},
+                  React.createElement(CourseInsight,{report})
+                )
+              )
+            )
+          )
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(
+        React.createElement(App,null)
+      );
     </script>
   </body>
 </html>
