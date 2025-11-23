@@ -74,8 +74,8 @@
       const isTeamLike = name => {
         const s = (name || '').trim();
         return (
-          /^players?$/i.test(s) ||           // Player / Players
-          /^team(\s*\d+)?$/i.test(s) ||     // Team, Team 1, Team 2
+          /^players?$/i.test(s) ||
+          /^team(\s*\d+)?$/i.test(s) ||
           /^team average$/i.test(s) ||
           /^stableford$/i.test(s) ||
           /^strokeplay$/i.test(s) ||
@@ -101,7 +101,6 @@
       }
 
       // ---------- CSV parsing ----------
-
       function splitSmart(raw){
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
@@ -112,7 +111,6 @@
         return Number.isFinite(v)?v:NaN;
       }
 
-      // Per-hole Stableford reader for Squabbit card rows
       function readStablefordPerHole(row){
         let start = -1;
         for (let i = 0; i < row.length; i++) {
@@ -124,21 +122,14 @@
         if (start < 0) return null;
 
         const vals = [];
-
-        // Skip the playing handicap cell just after "Stableford"
         for (let j = start + 2; j < row.length && vals.length < 18; j++) {
           const raw = String(row[j] || '').trim();
           if (!raw) continue;
-
-          // Pick-up etc → 0 points
           if (raw === 'P' || raw === 'p' || raw === '\\') {
             vals.push(0);
             continue;
           }
-
           const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
-
-          // Per-hole Stableford scores are small ints; ignore big totals like 16/17/33
           if (Number.isFinite(n) && n >= 0 && n <= 6) {
             vals.push(n);
           }
@@ -165,7 +156,6 @@
               if (!Number.isNaN(n)) nums.push(n);
             }
             if (nums.length >= 19) {
-              // Pattern: 9 holes, 36, 9 holes, 36, 72
               const front = nums.slice(0,9);
               const back = nums.slice(10,19);
               parsedPars = front.concat(back);
@@ -198,7 +188,7 @@
             const name = (row[0] || '').trim();
             if (!name) break;
             if (isTeamLike(name)) continue;
-            if (/^player$/i.test(name)) continue; // explicit "Player" guard
+            if (/^player$/i.test(name)) continue;
 
             const hcap = parseFloat((row[1] || '').trim());
             if (!Number.isNaN(hcap)) {
@@ -234,22 +224,16 @@
 
         const totals = {};
         if (totalsStart >= 0) {
-          // Row after is header; data starts from +2
           for (let i = totalsStart + 2; i < lines.length; i++) {
             const row = lines[i];
             if (!row) break;
 
             const name = (row[0] || '').trim();
-
-            // Stop at blank / "..." / "Round X"
             if (!name || name === '...' || /^round\s*\d+/i.test(name)) break;
-
-            // Skip header / aggregate-ish rows
             if (/^player$/i.test(name)) continue;
             if (isTeamLike(name)) continue;
             if (!/[A-Za-z]/.test(name)) continue;
 
-            // Collect all numeric cells apart from the name; last numeric = Total
             const numeric = [];
             for (let j = 1; j < row.length; j++) {
               const v = toNum(row[j]);
@@ -259,7 +243,6 @@
             const pts = numeric[numeric.length - 1];
             totals[name] = pts;
 
-            // Ensure we have a player object even if there was no roster
             if (!players.some(p => p.name === name)) {
               players.push({ name, handicap: 0, gender: genderMap[name] || 'M' });
             }
@@ -278,7 +261,6 @@
             if ((row[0] || '').trim() === p.name) {
               const stRow = lines[i + 1] || [];
 
-              // Find "Stableford" cell
               let stIndex = -1;
               for (let j = 0; j < stRow.length; j++) {
                 if (String(stRow[j]).trim().toLowerCase() === 'stableford') {
@@ -293,7 +275,6 @@
 
               const hcapCard = toNum(stRow[stIndex + 1]);
               let totalFromCard = NaN;
-              // Last numeric value after the Stableford label = total points
               for (let j = stRow.length - 1; j > stIndex; j--) {
                 const v = toNum(stRow[j]);
                 if (Number.isFinite(v)) {
@@ -318,14 +299,11 @@
           }
         }
 
-        // ---- 5. Build final players array ----
         return {
           players: players.map(p => {
             const card = holeData[p.name] || {};
             const hcapCard = card.hcapCard;
             let handicap = Number.isFinite(p.handicap) ? p.handicap : NaN;
-
-            // Prefer roster handicap, fall back to card handicap
             if (!Number.isFinite(handicap) || handicap <= 0) {
               handicap = Number.isFinite(hcapCard) ? hcapCard : 0;
             }
@@ -345,14 +323,11 @@
               perHole: card.perHole || []
             };
           }),
-
-          // Use one par set for now; we can split by gender later if needed
           parsMen: parsedPars,
           parsWomen: parsedPars
         };
       }
 
-      // Countback
       function compareByCountback(a,b){
         const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
         const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
@@ -365,7 +340,7 @@
 
       // ---------- App ----------
       function App(){
-        const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic
+        const [view,setView] = useState('home');
 
         // Supabase
         const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
@@ -373,12 +348,13 @@
         const [client,setClient] = useState(null);
         const [statusMsg,setStatusMsg] = useState('Connecting…');
 
-        const BUCKET='den-events';
+        // bucket + folder FOR DEN SOCIETY
+        const BUCKET='den_society';
         const PREFIX='events';
         const [shared,setShared]=useState([]);
         const [sharedGroups,setSharedGroups]=useState([]);
 
-        const [eventName,setEventName]=useState('Den Society Meeting');
+        const [eventName,setEventName]=useState('Den Society');
         const [players,setPlayers]=useState([]);
         const [season,setSeason]=useState({});
         const [coursePars,setCoursePars] = useState({
@@ -387,13 +363,14 @@
         });
         const fileInputRef = useRef(null);
 
-        useEffect(()=>{ // init supabase + fetch
+        useEffect(()=>{
           let cancelled=false;
           async function boot(){
             try{
               if(!(window.supabase && window.supabase.createClient)){ setTimeout(boot,250); return; }
               const c = window.supabase.createClient(defaultURL, defaultKEY, { auth:{ persistSession:false }});
               if(cancelled) return; setClient(c);
+              // probe Den Society table
               const probe = await c.from('season_standings').select('name').limit(1);
               if(cancelled) return;
               if(probe.error){ setStatusMsg('Error: '+probe.error.message); }
@@ -405,15 +382,26 @@
         },[]);
 
         async function refreshShared(c){
-          c=c||client; if(!c) return;
-          const r = await c.storage.from(BUCKET).list(PREFIX, { limit:1000, sortBy:{column:'name', order:'asc'} });
-          if(r.error) return;
+          c = c || client;
+          if (!c) return;
+
+          const r = await c.storage
+            .from(BUCKET)
+            .list(PREFIX, { limit:1000, sortBy:{column:'name', order:'asc'} });
+
+          if (r.error) {
+            console.error('Storage list error:', r.error);
+            toast('Storage error: ' + r.error.message);
+            return;
+          }
+
           const data=(r.data||[])
             .filter(x=>!x.name.startsWith('.') && /\.csv$/i.test(x.name))
             .map(x=>({ name:x.name.replace(/\.csv$/i,''), file:x.name, path: PREFIX+'/'+x.name }));
           setShared(data);
           setSharedGroups(groupByYear(data));
         }
+
         function groupByYear(files){
           const groups={};
           for(const f of files){ const m=f.name.match(/(20\d{2})/); const year=m?m[1]:'Unknown'; (groups[year]=groups[year]||[]).push(f); }
@@ -432,11 +420,10 @@
             men: parsed.parsMen || COURSE_DEFAULT_MEN,
             women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
           });
-          setView('event'); // go to event screen
+          setView('event');
           toast('Event loaded');
         }
 
-        // computed event outcomes
         const computed = useMemo(()=>{
           const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
           const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
@@ -463,7 +450,9 @@
         },[players]);
 
         async function fetchSeasonWith(c){
-          const r = await c.from('season_standings').select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+          const r = await c
+            .from('season_standings')
+            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
           if(r.error){ setStatusMsg('Error: '+r.error.message); return; }
           const data=r.data||[]; const map={};
           for(const rec of data){
@@ -493,10 +482,89 @@
           if(client){
             const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
             for(const r of vals){
-              rows.push({ name:r.name, total_points:r.totalPoints|0, events:r.events|0, best_event_points:(r.bestEventPoints??0)|0, best_hole_points:(r.bestHolePoints??0)|0, eclectic_total:(r.eclecticTotal??0)|0, best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0) });
+              rows.push({
+                name:r.name,
+                total_points:r.totalPoints|0,
+                events:r.events|0,
+                best_event_points:(r.bestEventPoints??0)|0,
+                best_hole_points:(r.bestHolePoints??0)|0,
+                eclectic_total:(r.eclecticTotal??0)|0,
+                best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0)
+              });
             }
-            const u = await client.from('season_standings').upsert(rows,{onConflict:'name'});
+            const u = await client
+              .from('season_standings')
+              .upsert(rows,{onConflict:'name'});
             if(u.error){ toast('Error: '+u.error.message); } else { toast('Event added to season ✓'); }
+          }
+        }
+
+        async function clearSeason(){
+          if(!client){ toast('No Supabase client'); return; }
+          if(!window.confirm('This will delete ALL Den Society season standings. Are you sure?')) return;
+          const { error } = await client
+            .from('season_standings')
+            .delete()
+            .neq('name','');
+          if(error){ toast('Error: '+error.message); return; }
+          setSeason({});
+          toast('Season cleared');
+        }
+
+        async function removeEventFromSeason(){
+          if(!computed.length){ toast('Load an event first'); return; }
+          if(!window.confirm('Remove this event from the Den Society season standings?')) return;
+
+          const next={ ...season };
+
+          for(const r of computed){
+            if(isTeamLike(r.name)) continue;
+            const prev = next[r.name];
+            if(!prev) continue;
+
+            const newTotal = (prev.totalPoints||0) - (r.leaguePoints||0);
+            const newEvents = Math.max(0,(prev.events||0)-1);
+
+            if(newTotal<=0 && newEvents===0){
+              delete next[r.name];
+            } else {
+              next[r.name] = {
+                ...prev,
+                totalPoints:newTotal,
+                events:newEvents
+              };
+            }
+          }
+
+          const oldSeason = season;
+          setSeason(next);
+
+          if(client){
+            const removedNames = Object.keys(oldSeason).filter(name => !next[name]);
+            if(removedNames.length){
+              const { error: delErr } = await client
+                .from('season_standings')
+                .delete()
+                .in('name', removedNames);
+              if(delErr){ toast('Error: '+delErr.message); return; }
+            }
+
+            const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
+            for(const r of vals){
+              rows.push({
+                name:r.name,
+                total_points:r.totalPoints|0,
+                events:r.events|0,
+                best_event_points:(r.bestEventPoints??0)|0,
+                best_hole_points:(r.bestHolePoints??0)|0,
+                eclectic_total:(r.eclecticTotal??0)|0,
+                best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0)
+              });
+            }
+            const { error: upErr } = await client
+              .from('season_standings')
+              .upsert(rows,{onConflict:'name'});
+            if(upErr){ toast('Error: '+upErr.message); } else { toast('Event removed from season ✓'); }
           }
         }
 
@@ -507,7 +575,6 @@
           downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows);
         }
 
-        // ---------- UI ----------
         function Header(){
           return (
             <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white">
@@ -540,7 +607,7 @@
 
               <div className={`overflow-hidden transition-all ${open?'max-h-[2000px]':'max-h-0'}`}>
                 <div className="mt-3 grid gap-2">
-                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('past')}>View Past Golf Events</button>
+                  <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('past')}>View Past Den Events</button>
                   <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('ratings')}>View Player Ratings</button>
                   <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('standings')}>Check Season Standings</button>
                   <button className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2" onClick={()=>setView('eclectic')}>Check Eclectic Leaderboard</button>
@@ -579,10 +646,21 @@
                   >Add Event → Season</button>
 
                   <button
+                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-amber-300 bg-amber-50 text-amber-800':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
+                    onClick={removeEventFromSeason}
+                    disabled={!canAct}
+                  >Remove Event ← Season</button>
+
+                  <button
                     className={`w-full text-left rounded-xl border px-3 py-2 ${canAct?'border-squab-200 bg-white':'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
                     onClick={exportEventCSV}
                     disabled={!canAct}
                   >Download CSV</button>
+
+                  <button
+                    className="w-full text-left rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-red-700"
+                    onClick={clearSeason}
+                  >Delete Entire Season</button>
                 </div>
               </div>
             </section>
@@ -593,7 +671,7 @@
           return (
             <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-200 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-squab-900">Past Den Society Golf Games</h2>
+                <h2 className="text-lg font-semibold text-squab-900">Past Den Society Events</h2>
                 <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
               </div>
               {sharedGroups.length===0 && <div className="text-sm text-neutral-600 p-2">No shared CSVs yet.</div>}
@@ -753,10 +831,25 @@
                 <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
               </div>
               <div className="overflow-auto">
-                <table className="min-w-full text-sm"><thead><tr className="border-b border-squab-200 text-left"><th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th></tr></thead>
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-squab-200 text-left">
+                      <th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {list.length===0 && <tr><td colSpan="7" className="py-3 text-neutral-600">No season data found.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-200"><td>{i+1}</td><td>{r.name}</td><td>{r.events}</td><td>{r.totalPoints}</td><td>{r.bestEventPoints??0}</td><td>{r.bestHolePoints??0}</td><td>{r.eclecticTotal??0}</td></tr>))}
+                    {list.map((r,i)=>(
+                      <tr key={r.name} className="border-b border-squab-200">
+                        <td>{i+1}</td>
+                        <td>{r.name}</td>
+                        <td>{r.events}</td>
+                        <td>{r.totalPoints}</td>
+                        <td>{r.bestEventPoints??0}</td>
+                        <td>{r.bestHolePoints??0}</td>
+                        <td>{r.eclecticTotal??0}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -774,10 +867,24 @@
               </div>
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
-                  <thead><tr className="border-b border-squab-200 text-left"><th>Rank</th><th>Name</th><th>Eclectic Total</th>{Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}</tr></thead>
+                  <thead>
+                    <tr className="border-b border-squab-200 text-left">
+                      <th>Rank</th>
+                      <th>Name</th>
+                      <th>Eclectic Total</th>
+                      {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
+                    </tr>
+                  </thead>
                   <tbody>
                     {list.length===0 && <tr><td colSpan="21" className="py-3 text-neutral-600">No eclectic yet.</td></tr>}
-                    {list.map((r,i)=>(<tr key={r.name} className="border-b border-squab-200"><td>{i+1}</td><td>{r.name}</td><td>{r.eclecticTotal??0}</td>{(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}</tr>))}
+                    {list.map((r,i)=>(
+                      <tr key={r.name} className="border-b border-squab-200">
+                        <td>{i+1}</td>
+                        <td>{r.name}</td>
+                        <td>{r.eclecticTotal??0}</td>
+                        {(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(<td key={ix}>{v}</td>))}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
