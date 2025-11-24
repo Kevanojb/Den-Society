@@ -3,16 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Den Society — League & Eclectic</title>
+    <title>Den Society — Events & Eclectic</title>
     <link rel="icon" href="./favicon.ico" />
     <meta name="theme-color" content="#199f57" />
-    <meta property="og:title" content="Den Society — League & Eclectic" />
-    <meta property="og:description" content="Event results, ratings, standings and eclectic leaderboard." />
+    <meta property="og:title" content="Den Society — Events & Eclectic" />
+    <meta property="og:description" content="Event results, ratings, standings, player hole analysis and eclectic leaderboard." />
 
-    <!-- Tailwind config BEFORE the CDN -->
+    <!-- Tailwind Config FIRST -->
     <script>
-      window.tailwind = window.tailwind || {};
-      window.tailwind.config = {
+      window.tailwind = {
         darkMode: 'class',
         theme: {
           extend: {
@@ -36,36 +35,71 @@
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- React + Babel + Supabase UMD -->
+    <!-- React + Babel + Supabase (UMD builds) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
+    <!-- Base styles -->
     <style>
-      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-      .chip{padding:.15rem .5rem;border-radius:.5rem;border:1px solid #e5e5e5;background:#fafafa}
-      .btn{padding:.5rem .75rem;border-radius:.75rem;transition:all .15s ease}
-      .btn:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-      .panel-mint{ background:#eefbf2; border:1px solid #b4eac9 }
-      @media print{ .hide-print{display:none!important} }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      }
+      .chip {
+        padding: 0.3rem 0.65rem;
+        border-radius: 0.5rem;
+        border: 1px solid #c6e7d0;
+        background: #eefbf2;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.15s, transform 0.15s;
+      }
+      .chip:hover {
+        background: #dff7e6;
+        transform: translateY(-1px);
+      }
+      .btn {
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.75rem;
+        transition: all 0.15s ease;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+      }
+      .panel-mint {
+        background: #eefbf2;
+        border: 1px solid #b4eac9;
+      }
+      @media print { .hide-print { display: none !important; } }
     </style>
   </head>
+
   <body class="bg-neutral-50 text-neutral-900">
     <div id="root"></div>
 
+    <!-- React App -->
     <script type="text/babel" data-presets="react">
-      console.log('[winter] app script starting');
-
       /* global React, ReactDOM, supabase */
-      const { useState, useMemo, useEffect, useRef } = React;
 
-      // ---------- utilities ----------
+      const { useState, useEffect, useMemo, useRef } = React;
+
+      // -----------------------
+      // Utility Functions
+      // -----------------------
+
       const POINTS_TABLE = [20,17,15,13,11,9,8,7,6,5,4,3,2,1];
-      const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
-      const csvEscape=s=>{ if(s==null) return ""; const str=String(s); return /[",\n]/.test(str) ? '"'+str.replace(/"/g,'""')+'"' : str; };
-      const downloadCSV=(filename, rows)=>{ const csv=rows.map(r=>r.map(csvEscape).join(",")).join("\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); };
-      const to1=x=>Math.round((Number(x)||0)*10)/10;
+      const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+      const csvEscape = s => {
+        if (s == null) return "";
+        const str = String(s);
+        return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+      };
+
+      const to1 = x => Math.round((Number(x)||0)*10)/10;
+
       function toast(msg){
         try{
           const t=document.createElement('div');
@@ -76,15 +110,83 @@
             t.style.opacity='0';
             t.style.transition='opacity .2s';
             setTimeout(()=>t.remove(),220);
-          },1400);
+          }, 1400);
         }catch{}
       }
 
-      const COURSE_DEFAULT_MEN   = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
-      const COURSE_DEFAULT_WOMEN = [4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
+      // -----------------------
+      // Default Course Data (fallback only – DB will override)
+      // Using Chart Hills 66/55 from card
+      // -----------------------
+
+      const COURSE_DEFAULT_MEN = [
+        5,4,3,4,5,4,3,4,4,
+        4,3,5,4,4,4,5,3,4
+      ];
+      const COURSE_DEFAULT_WOMEN = COURSE_DEFAULT_MEN.slice();
+
+      const COURSE_YARDS_MEN = [
+        564,443,166,402,487,300,185,404,353,
+        407,159,529,416,375,409,505,136,413
+      ];
+
+      const COURSE_YARDS_WOMEN = [
+        480,367,113,337,437,226,137,350,280,
+        382,124,411,352,309,362,471,75,347
+      ];
+
+      const COURSE_STROKE_INDEX = [
+        10,6,16,4,18,12,14,2,8,
+        5,11,17,1,7,3,13,15,9
+      ];
+
+      // -----------------------
+      // Handicap Maths
+      // -----------------------
+
+      function playingCapByGender(g){ return g==="F"?36:28; }
+      function rangeForHcap(h){
+        if(h<=9)return"0-9";
+        if(h<=18)return"10-18";
+        if(h<=28)return"19-28";
+        return"29-36";
+      }
+      function cutPerPointOver34(h){
+        const r=rangeForHcap(h);
+        return r==="0-9"?0.5 : r==="10-18"?1 : r==="19-28"?1 : 1.5;
+      }
+      function winnerBonusCut(h){
+        const r=rangeForHcap(h);
+        return r==="0-9"?1 : r==="10-18"?2 : r==="19-28"?2.5 : 3;
+      }
+      function computeNewExactHandicap(start,g,pts,b9,isWinner){
+        const startPlay=Math.round(start);
+        let exact=start;
+
+        if(pts>=35){
+          exact-=cutPerPointOver34(startPlay)*(pts-34);
+        } else if(pts<=31){
+          exact+=0.5*(32-pts);
+        }
+
+        if(isWinner) exact-=winnerBonusCut(startPlay);
+
+        const max=playingCapByGender(g);
+        const bounded=clamp(exact,0,60);
+        const nextPlay=clamp(Math.round(bounded),0,max);
+
+        return {
+          nextExact:bounded,
+          nextPlaying:nextPlay
+        };
+      }
+
+      // -----------------------
+      // CSV Parsing (Squabbit Friendly)
+      // -----------------------
 
       const isTeamLike = name => {
-        const s=(name||'').trim();
+        const s = (name || '').trim();
         return (
           /^players?$/i.test(s) ||
           /^team(\s*\d+)?$/i.test(s) ||
@@ -96,331 +198,606 @@
         );
       };
 
-      // Handicap maths
-      function playingCapByGender(g){ return g==="F"?36:28; }
-      function rangeForHcap(h){ if(h<=9)return"0-9"; if(h<=18)return"10-18"; if(h<=28)return"19-28"; return"29-36"; }
-      function cutPerPointOver34(h){ const r=rangeForHcap(h); return r==="0-9"?0.5:r==="10-18"?1:r==="19-28"?1:1.5; }
-      function winnerBonusCut(h){ const r=rangeForHcap(h); return r==="0-9"?1:r==="10-18"?2:r==="19-28"?2.5:3; }
-      function computeNewExactHandicap(start,g,pts,b9,w){
-        const startPlay=Math.round(start); let exact=start;
-        if(pts>=35){exact-=cutPerPointOver34(startPlay)*(pts-34);}
-        else if(pts<=31){ exact+=0.5*(32-pts);}
-        if(w) exact-=winnerBonusCut(startPlay);
-        const max=playingCapByGender(g);
-        const bounded=clamp(exact,0,60);
-        const nextPlay=clamp(Math.round(bounded),0,max);
-        return {nextExact:bounded,nextPlaying:nextPlay};
-      }
-
-      // ---------- CSV parsing ----------
       function splitSmart(raw){
         const d = raw.includes('\t') ? '\t' : (raw.includes(';') ? ';' : ',');
         return raw.split(d).map(s => (s||'').replace(/^"|"$/g,'').trim());
       }
-
       function toNum(x){
         const v=parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g,''));
         return Number.isFinite(v)?v:NaN;
       }
 
+      // Read per-hole Stableford for an individual card
       function readStablefordPerHole(row){
-        let start = -1;
-        for (let i = 0; i < row.length; i++) {
-          if (String(row[i]).trim().toLowerCase() === 'stableford') {
-            start = i;
-            break;
-          }
+        let start=-1;
+        for(let i=0;i<row.length;i++){
+          if(String(row[i]).trim().toLowerCase()==='stableford'){ start=i; break; }
         }
-        if (start < 0) return null;
+        if(start<0) return null;
 
-        const vals = [];
-        for (let j = start + 2; j < row.length && vals.length < 18; j++) {
-          const raw = String(row[j] || '').trim();
-          if (!raw) continue;
-          if (raw === 'P' || raw === 'p' || raw === '\\') {
-            vals.push(0);
-            continue;
-          }
-          const n = parseFloat(raw.replace(/[^0-9.\-]/g, ''));
-          if (Number.isFinite(n) && n >= 0 && n <= 6) {
-            vals.push(n);
-          }
+        const vals=[];
+        for(let j=start+2; j<row.length && vals.length<18; j++){
+          const raw=String(row[j]||'').trim();
+          if(!raw) continue;
+          if(raw==='P' || raw==='p' || raw==='\\'){ vals.push(0); continue; }
+          const n=parseFloat(raw.replace(/[^0-9.\-]/g,''));
+          if(Number.isFinite(n) && n>=0 && n<=6){ vals.push(n); }
         }
-        while (vals.length < 18) vals.push(0);
-        return vals.slice(0, 18);
+        while(vals.length<18) vals.push(0);
+        return vals.slice(0,18);
       }
+
+      // -----------------------
+      // Parse Entire Squabbit CSV
+      // -----------------------
 
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n');
         const lines = rows.map(splitSmart);
 
-        // Par row (if present)
-        let parsedPars = null;
-        for (let i = 0; i < lines.length; i++) {
-          const row = lines[i];
-          if (!row || !row[0]) continue;
-          if (String(row[0]).trim().toLowerCase() === 'par') {
-            const nums = [];
-            for (let j = 3; j < row.length; j++) {
-              const cell = String(row[j] || '').trim();
-              const n = parseInt(cell,10);
-              if (!Number.isNaN(n)) nums.push(n);
+        // --- Detect PAR row ---
+        let parsedPars=null;
+        for(let i=0;i<lines.length;i++){
+          const row=lines[i];
+          if((row[0]||'').trim().toLowerCase()==='par'){
+            const nums=[];
+            for(let j=3;j<row.length;j++){
+              const cell=String(row[j]||'').trim();
+              const n=parseInt(cell,10);
+              if(!Number.isNaN(n)) nums.push(n);
             }
-            if (nums.length >= 19) {
+            if(nums.length>=19){
               const front = nums.slice(0,9);
-              const back = nums.slice(10,19);
+              const back  = nums.slice(10,19);
               parsedPars = front.concat(back);
-            } else if (nums.length === 18) {
+            } else if(nums.length===18){
               parsedPars = nums.slice(0,18);
             }
             break;
           }
         }
-        if (!parsedPars || parsedPars.length !== 18) {
+        if(!parsedPars || parsedPars.length!==18){
           parsedPars = COURSE_DEFAULT_MEN.slice();
         }
 
-        // Roster
+        // --- Roster detection ---
         let playerHeaderRow=-1;
         for(let i=0;i<lines.length;i++){
-          if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){ playerHeaderRow=i; break; }
-        }
-        const players=[];
-        if(playerHeaderRow>=0){
-          for(let i=playerHeaderRow+1;i<lines.length;i++){
-            const name=(lines[i][0]||'').trim();
-            if(!name) break;
-            if(isTeamLike(name)) continue;
-            if(/^player$/i.test(name)) continue;
-            const hcap=parseFloat((lines[i][1]||'').trim());
-            if(!Number.isNaN(hcap)) players.push({name,handicap:hcap,gender:'M'});
+          if((lines[i][0]||'')==='Name' && (lines[i][1]||'')==='Hdcp'){
+            playerHeaderRow=i; break;
           }
         }
 
-        // Gender hints
+        const players=[];
+
+        if(playerHeaderRow>=0){
+          for(let i=playerHeaderRow+1;i<lines.length;i++){
+            const row=lines[i];
+            if(!row) break;
+            const name=(row[0]||'').trim();
+            if(!name) break;
+            if(isTeamLike(name)) continue;
+            if(/^player$/i.test(name)) continue;
+            const hcap = parseFloat((row[1]||'').trim());
+            if(!Number.isNaN(hcap)){
+              players.push({ name, handicap:hcap, gender:'M' });
+            }
+          }
+        }
+
+        // --- Detect gender from tee labels ---
         const genderMap={};
         for(let r=0;r<lines.length;r++){
           const row=lines[r];
-          const nm=(row[0]||'').trim(); if(!nm) continue;
+          if(!row) continue;
+          const nm=(row[0]||'').trim();
+          if(!nm) continue;
           const tee=String(row[1]||'').toLowerCase();
           if(/women|ladies|red tee/.test(tee)) genderMap[nm]='F';
           else if(genderMap[nm]==null) genderMap[nm]='M';
         }
         for(const p of players){
-          if(genderMap[p.name]) p.gender=genderMap[p.name];
+          if(genderMap[p.name]) p.gender = genderMap[p.name];
         }
 
-        // Totals under a "Stableford" header
+        // --- Summary stableford table ---
         let totalsStart=-1;
         for(let i=0;i<lines.length;i++){
-          if(/^stableford$/i.test((lines[i][0]||'').trim())) { totalsStart=i; break; }
+          const first=(lines[i][0]||'').trim().toLowerCase();
+          if(first==='stableford'){ totalsStart=i; break; }
         }
+
         const totals={};
+
         if(totalsStart>=0){
-          for(let i=totalsStart+1;i<lines.length;i++){
+          for(let i=totalsStart+2;i<lines.length;i++){
             const row=lines[i];
-            const a=(row[0]||'').trim();
-            const b=toNum(row[1]);
-            const c=toNum(row[2]);
-            if(!a){ if(i>totalsStart+1) break; else continue; }
-            if(!/[A-Za-z]/.test(a) || a.length<3) continue;
-            const pts=Number.isFinite(c)?c:(Number.isFinite(b)?b:NaN);
-            if(Number.isFinite(pts)) totals[a]=pts;
-            if(!players.some(p=>p.name===a)){
-              players.push({name:a,handicap:0,gender:(genderMap[a]||'M')});
+            if(!row) break;
+            const name=(row[0]||'').trim();
+            if(!name || name==='...' || /^round\s*\d+/i.test(name)) break;
+            if(/^(player)$/i.test(name)) continue;
+            if(isTeamLike(name)) continue;
+
+            const numeric=[];
+            for(let j=1;j<row.length;j++){
+              const v=toNum(row[j]);
+              if(Number.isFinite(v)) numeric.push(v);
+            }
+            if(!numeric.length) continue;
+            totals[name] = numeric[numeric.length-1];
+
+            if(!players.some(p=>p.name===name)){
+              players.push({ name, handicap:0, gender:genderMap[name]||'M' });
             }
           }
         }
 
-        // Per-hole from cards
+        // --- Individual card per-hole extraction ---
         const holeData={};
         for(const p of players){
+          let found=false;
           for(let i=0;i<lines.length-1;i++){
-            if((lines[i][0]||'').trim()===p.name){
-              const stRow=lines[i+1]||[];
-              let hasStable=false;
+            const row=lines[i];
+            if(!row) continue;
+            if((row[0]||'').trim()===p.name){
+              const stRow = lines[i+1] || [];
+              let stIndex=-1;
               for(let j=0;j<stRow.length;j++){
-                if(String(stRow[j]).trim().toLowerCase()==='stableford'){ hasStable=true; break; }
+                if(String(stRow[j]).trim().toLowerCase()==='stableford'){ stIndex=j; break; }
               }
-              if(!hasStable) continue;
+              if(stIndex<0) continue;
+
               const perHole=readStablefordPerHole(stRow);
-              const back9=perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
-              holeData[p.name]={perHole, back9};
+              const back9 = perHole.slice(9).reduce((a,b)=>a+(Number(b)||0),0);
+              const hcapCard = toNum(stRow[stIndex+1]);
+
+              let totalFromCard=NaN;
+              for(let j=stRow.length-1;j>stIndex;j--){
+                const v=toNum(stRow[j]);
+                if(Number.isFinite(v)){ totalFromCard=v; break; }
+              }
+
+              holeData[p.name] = { perHole, back9, hcapCard, totalFromCard };
+              found=true;
               break;
             }
           }
-          if(!holeData[p.name]) holeData[p.name]={perHole:Array(18).fill(0), back9:0};
+          if(!found){
+            holeData[p.name] = {
+              perHole:Array(18).fill(0),
+              back9:0, hcapCard:NaN, totalFromCard:NaN
+            };
+          }
         }
 
-        return {
-          players: players.map(p => ({
+        // --- Final cleaned players ---
+        const cleaned = players.filter(p =>
+          p.name &&
+          !/^player$/i.test(p.name.trim()) &&
+          !isTeamLike(p.name)
+        );
+
+        const finalPlayers = cleaned.map(p=>{
+          const card=holeData[p.name]||{};
+          const hcapCard = card.hcapCard;
+          let handicap = Number.isFinite(p.handicap)?p.handicap:NaN;
+
+          if(!Number.isFinite(handicap) || handicap<=0){
+            handicap = Number.isFinite(hcapCard)?hcapCard:0;
+          }
+
+          const ptsSummary = totals[p.name];
+          const cardTotal = card.totalFromCard;
+          let points = 0;
+          if(Number.isFinite(ptsSummary)) points = ptsSummary;
+          else if(Number.isFinite(cardTotal)) points = cardTotal;
+
+          return {
             name:p.name,
-            gender:p.gender,
-            handicap:p.handicap,
-            points: totals[p.name] || 0,
-            back9: (holeData[p.name] && holeData[p.name].back9) || 0,
-            perHole: (holeData[p.name] && holeData[p.name].perHole) || []
-          })),
+            gender:p.gender||genderMap[p.name]||'M',
+            handicap,
+            points,
+            back9:card.back9||0,
+            perHole:card.perHole||[]
+          };
+        });
+
+        return {
+          players: finalPlayers,
           parsMen: parsedPars,
-          parsWomen: parsedPars
+          parsWomen: parsedPars,
+          yardsMen: COURSE_YARDS_MEN,
+          yardsWomen: COURSE_YARDS_WOMEN,
+          strokeIndex: COURSE_STROKE_INDEX
         };
       }
 
-      // Countback
-      function compareByCountback(a,b){
-        const pa=(a.perHole||[]).slice(0,18), pb=(b.perHole||[]).slice(0,18);
-        const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
-        const aB9=sum(pa,9,18), bB9=sum(pb,9,18); if(aB9!==bB9) return bB9-aB9;
-        const aL6=sum(pa,12,18), bL6=sum(pb,12,18); if(aL6!==bL6) return bL6-aL6;
-        const aL3=sum(pa,15,18), bL3=sum(pb,15,18); if(aL3!==bL3) return bL3-aL3;
-        for(let i=17;i>=0;i--){
-          const ai=Number(pa[i])||0, bi=Number(pb[i])||0;
-          if(ai!==bi) return bi-ai;
-        }
-        return 0;
-      }
+      // ---------------------------
+      // App Component
+      // ---------------------------
+      function App() {
+        const [view, setView] = useState('home'); 
+        const [selectedPlayer, setSelectedPlayer] = useState('');
+        
+        // Supabase config (update for your project if needed)
+        const SUPA_URL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
+        const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
 
-      // ---------- App ----------
-      function App(){
-        const [view,setView] = useState('home'); // home | past | event | ratings | standings | eclectic
+        // Den events bucket (for Squabbit CSVs)
+        const BUCKET = "den_events";
+        const PREFIX = "events";
 
-        const defaultURL="https://mqknahdfpqxrpgpxqtus.supabase.co";
-        const defaultKEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
-        const [client,setClient] = useState(null);
-        const [statusMsg,setStatusMsg] = useState('Connecting…');
+        // Course layout tables
+        const COURSES_TABLE = "courses";
+        const COURSE_HOLES_TABLE = "course_holes";
 
-        // WINTER LEAGUE STORAGE
-        const BUCKET='den-events';
-        const PREFIX='events';
+        // Season standings table
+        const STANDINGS_TABLE = "season_standings";
 
-        const [shared,setShared]=useState([]);
-        const [sharedGroups,setSharedGroups]=useState([]);
+        const [client, setClient] = useState(null);
+        const [statusMsg, setStatusMsg] = useState("Connecting…");
 
-        const [eventName,setEventName]=useState('Den Society');
-        const [players,setPlayers]=useState([]);
-        const [season,setSeason]=useState({});
-        const [coursePars,setCoursePars] = useState({
+        const [shared, setShared] = useState([]);
+        const [sharedGroups, setSharedGroups] = useState([]);
+
+        const [players, setPlayers] = useState([]);
+        const [season, setSeason] = useState({});
+        const [eventName, setEventName] = useState("Den Society Event");
+
+        const [coursePars, setCoursePars] = useState({
           men: COURSE_DEFAULT_MEN,
           women: COURSE_DEFAULT_WOMEN
         });
+
+        const [courseYards, setCourseYards] = useState({
+          men: COURSE_YARDS_MEN,
+          women: COURSE_YARDS_WOMEN
+        });
+
+        const [strokeIndex, setStrokeIndex] = useState(COURSE_STROKE_INDEX);
+
         const fileInputRef = useRef(null);
 
-        useEffect(()=>{ 
-          let cancelled=false;
-          async function boot(){
-            console.log('[winter] boot starting');
-            try{
-              if(!(window.supabase && window.supabase.createClient)){
-                console.log('[winter] supabase not ready yet, retry');
-                setTimeout(boot,250);
+        // ---------------------------
+        // Init Supabase + fetch season + shared events
+        // ---------------------------
+        useEffect(() => {
+          let cancelled = false;
+
+          async function boot() {
+            try {
+              if (!(window.supabase && window.supabase.createClient)) {
+                setTimeout(boot, 200);
                 return;
               }
-              const c = window.supabase.createClient(defaultURL, defaultKEY, { auth:{ persistSession:false }});
-              if(cancelled) return;
-              console.log('[winter] client created');
+
+              const c = window.supabase.createClient(SUPA_URL, SUPA_KEY, {
+                auth: { persistSession: false }
+              });
+
+              if (cancelled) return;
               setClient(c);
-              const probe = await c.from('season_standings').select('name').limit(1);
-              if(cancelled) return;
-              if(probe.error){
-                console.error('[winter] probe error:', probe.error);
-                setStatusMsg('Error: '+probe.error.message);
+
+              const probe = await c.from(STANDINGS_TABLE).select('name').limit(1);
+              if (probe.error) {
+                setStatusMsg('Error: ' + probe.error.message);
               } else {
-                console.log('[winter] probe ok, calling refreshShared + fetchSeasonWith');
-                setStatusMsg('Connected');
+                setStatusMsg("Connected");
                 await refreshShared(c);
-                await fetchSeasonWith(c);
+                await fetchSeason(c);
               }
-            }catch(e){
-              console.error('[winter] boot exception', e);
-              if(!cancelled) setStatusMsg('Error: '+(e?.message||e));
+            } catch (err) {
+              if (!cancelled) setStatusMsg("Error: " + (err?.message || err));
             }
           }
+
           boot();
-          return ()=>{cancelled=true};
-        },[]);
+          return () => { cancelled = true };
+        }, []);
 
-        // DEBUGGING VERSION
-        async function refreshShared(c){
-          c = c || client;
-          if (!c){ 
-            console.warn('[refreshShared] no client yet');
+        // ---------------------------
+        // Course lookup via Supabase tables
+        // ---------------------------
+        async function applyCourseFromDb(courseHint, parsedFromSquabbit){
+          const applyFallback = () => {
+            setCoursePars({
+              men: parsedFromSquabbit.parsMen || COURSE_DEFAULT_MEN,
+              women: parsedFromSquabbit.parsWomen || parsedFromSquabbit.parsMen || COURSE_DEFAULT_WOMEN
+            });
+            setCourseYards({
+              men: parsedFromSquabbit.yardsMen || COURSE_YARDS_MEN,
+              women: parsedFromSquabbit.yardsWomen || COURSE_YARDS_WOMEN
+            });
+            setStrokeIndex(parsedFromSquabbit.strokeIndex || COURSE_STROKE_INDEX);
+          };
+
+          if (!client) {
+            applyFallback();
             return;
           }
 
-          console.log('[refreshShared] BUCKET =', BUCKET, 'PREFIX =', PREFIX);
+          try {
+            const hint = (courseHint || '').toLowerCase().replace(/\.[^.]+$/,'');
 
-          const r = await c.storage
-            .from(BUCKET)
-            .list(PREFIX, { limit:1000, sortBy:{column:'name', order:'asc'} });
+            const { data: courses, error } = await client
+              .from(COURSES_TABLE)
+              .select('id,name');
 
-          console.log('[refreshShared] raw result:', r);
+            if (error || !courses || !courses.length) {
+              applyFallback();
+              return;
+            }
 
-          if (r.error) {
-            console.error('Storage list error:', r.error);
-            toast('Storage error: ' + r.error.message);
-            setStatusMsg('Connected – storage error: '+r.error.message);
-            return;
+            const hintTokens = hint.split(/[^a-z0-9]+/i).filter(t => t && t.length>2);
+
+            function scoreCourseName(courseName){
+              const tokens = courseName.toLowerCase().split(/[^a-z0-9]+/i).filter(t => t && t.length>2);
+              if(!hintTokens.length || !tokens.length) return 0;
+              let score=0;
+              for(const t of hintTokens){
+                if(tokens.includes(t)) score+=1;
+              }
+              return score;
+            }
+
+            let bestCourse = null;
+            let bestScore = 0;
+            for (const c of courses){
+              const s = scoreCourseName(c.name);
+              if (s > bestScore){
+                bestScore = s;
+                bestCourse = c;
+              }
+            }
+
+            if (!bestCourse || bestScore === 0){
+              applyFallback();
+              return;
+            }
+
+            const { data: holes, error: holesError } = await client
+              .from(COURSE_HOLES_TABLE)
+              .select('hole,par_men,yards_men,par_women,yards_women,stroke_index')
+              .eq('course_id', bestCourse.id)
+              .order('hole', { ascending: true });
+
+            if (holesError || !holes || !holes.length){
+              applyFallback();
+              return;
+            }
+
+            const parsMen = Array(18).fill(null);
+            const parsWomen = Array(18).fill(null);
+            const yardsMen = Array(18).fill(null);
+            const yardsWomen = Array(18).fill(null);
+            const si = Array(18).fill(null);
+
+            for (const h of holes){
+              const idx = (h.hole || 0) - 1;
+              if (idx < 0 || idx >= 18) continue;
+              if (h.par_men != null) parsMen[idx] = Number(h.par_men);
+              if (h.par_women != null) parsWomen[idx] = Number(h.par_women);
+              if (h.yards_men != null) yardsMen[idx] = Number(h.yards_men);
+              if (h.yards_women != null) yardsWomen[idx] = Number(h.yards_women);
+              if (h.stroke_index != null) si[idx] = Number(h.stroke_index);
+            }
+
+            function clean(arr, fallback){
+              const out = Array(18);
+              for(let i=0;i<18;i++){
+                const v = Number(arr[i]);
+                out[i] = Number.isFinite(v) && v>0 ? v : (fallback ? fallback[i] : 0);
+              }
+              return out;
+            }
+
+            const pm = clean(parsMen, parsedFromSquabbit.parsMen || COURSE_DEFAULT_MEN);
+            const ym = clean(yardsMen, parsedFromSquabbit.yardsMen || COURSE_YARDS_MEN);
+            const siClean = clean(si, parsedFromSquabbit.strokeIndex || COURSE_STROKE_INDEX);
+
+            const pw = parsWomen.some(x=>Number(x)>0)
+              ? clean(parsWomen, pm)
+              : null;
+
+            const yw = yardsWomen.some(x=>Number(x)>0)
+              ? clean(yardsWomen, ym)
+              : null;
+
+            setCoursePars({
+              men: pm,
+              women: pw || pm
+            });
+            setCourseYards({
+              men: ym,
+              women: yw || ym
+            });
+            setStrokeIndex(siClean);
+          } catch (err){
+            console.error('Course lookup error', err);
+            applyFallback();
           }
-
-          const data=(r.data||[])
-            .filter(x=>{
-              console.log('[refreshShared] candidate entry:', x);
-              return !x.name.startsWith('.') && /\.csv$/i.test(x.name);
-            })
-            .map(x=>({
-              name:x.name.replace(/\.csv$/i,''),
-              file:x.name,
-              path: PREFIX+'/'+x.name
-            }));
-
-          console.log('[refreshShared] filtered files:', data);
-
-          setStatusMsg(`Connected – found ${data.length} CSV in den-events/${PREFIX}`);
-          setShared(data);
-          setSharedGroups(groupByYear(data));
         }
 
-        function groupByYear(files){
-          const groups={};
-          for(const f of files){
-            const m=f.name.match(/(20\d{2})/);
-            const year=m?m[1]:'Unknown';
-            (groups[year]=groups[year]||[]).push(f);
+        // ---------------------------
+        // Load shared events from Supabase Storage
+        // ---------------------------
+        async function refreshShared(c) {
+          c = c || client;
+          if (!c) return;
+
+          const r = await c.storage.from(BUCKET).list(PREFIX, {
+            limit: 1000,
+            sortBy: { column: "name", order: "asc" }
+          });
+
+          if (r.error) {
+            toast("Storage error: " + r.error.message);
+            return;
+          }
+
+          const data = (r.data || [])
+            .filter(x => !x.name.startsWith('.') && /\.csv$/i.test(x.name))
+            .map(x => ({
+              name: x.name.replace(/\.csv$/i, ''),
+              file: x.name,
+              path: `${PREFIX}/${x.name}`
+            }));
+
+          setShared(data);
+          setSharedGroups(groupEventsByYear(data));
+        }
+
+        function groupEventsByYear(files) {
+          const groups = {};
+          for (const f of files) {
+            const m = f.name.match(/(20\d{2})/);
+            const year = m ? m[1] : 'Unknown';
+            (groups[year] ||= []).push(f);
           }
           return Object.keys(groups)
             .sort((a,b)=>b.localeCompare(a))
-            .map(y=>({year:y, events:groups[y].sort((a,b)=>a.name.localeCompare(b.name))}));
+            .map(y => ({
+              year: y,
+              events: groups[y].sort((a,b)=>a.name.localeCompare(b.name))
+            }));
         }
 
-        async function loadShared(item){
-          if(!client) return;
-          const r=await client.storage.from(BUCKET).download(item.path);
-          if(r.error){ alert('Download failed: '+r.error.message); return; }
-          const text=await r.data.text();
-          const parsed=parseSquabbitCSV(text);
-          setPlayers(parsed.players||[]);
+        // ---------------------------
+        // Load event from Supabase
+        // ---------------------------
+        async function loadShared(item) {
+          if (!client) return;
+          const r = await client.storage.from(BUCKET).download(item.path);
+          if (r.error) {
+            alert("Download failed: " + r.error.message);
+            return;
+          }
+
+          const text = await r.data.text();
+          const parsed = parseSquabbitCSV(text);
+
+          const ps = parsed.players || [];
+          setPlayers(ps);
+          setSelectedPlayer(ps[0]?.name || '');
+
           setEventName(item.name);
-          setCoursePars({
-            men: parsed.parsMen || COURSE_DEFAULT_MEN,
-            women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
-          });
+
+          await applyCourseFromDb(item.name, parsed);
+
           setView('event');
-          toast('Event loaded');
+          toast("Event loaded");
         }
 
-        const computed = useMemo(()=>{
-          const rows=players.map((p,i)=>({idx:i,name:p.name,gender:p.gender,startExact:p.handicap,points:p.points,back9:p.back9,perHole:p.perHole}));
-          const base=[...rows].sort((a,b)=>(b.points-a.points)||(compareByCountback(a,b)));
-          if(!base.length) return [];
-          const groups=[]; const used=new Set();
+        // ---------------------------
+        // Load season table from Supabase
+        // ---------------------------
+        async function fetchSeason(c) {
+          c = c || client;
+          if (!c) return;
+
+          const r = await c
+            .from(STANDINGS_TABLE)
+            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
+
+          if (r.error) {
+            setStatusMsg("Error: " + r.error.message);
+            return;
+          }
+
+          const map = {};
+          for (const rec of (r.data || [])) {
+            if (isTeamLike(rec.name)) continue;
+
+            let bph = [];
+            if (Array.isArray(rec.best_per_hole)) bph = rec.best_per_hole;
+            else if (typeof rec.best_per_hole === 'string') {
+              try { bph = JSON.parse(rec.best_per_hole) } catch {}
+            }
+
+            map[rec.name] = {
+              name: rec.name,
+              totalPoints: rec.total_points || 0,
+              events: rec.events || 0,
+              bestEventPoints: rec.best_event_points ?? 0,
+              bestHolePoints: rec.best_hole_points ?? 0,
+              eclecticTotal: rec.eclectic_total ?? 0,
+              bestPerHole: (bph || []).map(n => Number(n)||0)
+            };
+          }
+
+          setSeason(map);
+        }
+
+        // ---------------------------
+        // Import CSV (local)
+        // ---------------------------
+        async function importLocalCSV(text, filename) {
+          const parsed = parseSquabbitCSV(text);
+          const ps = parsed.players || [];
+
+          setPlayers(ps);
+          setSelectedPlayer(ps[0]?.name || "");
+          setEventName((filename || "").replace(/\.[^.]+$/, ""));
+
+          await applyCourseFromDb(filename, parsed);
+
+          setView('event');
+        }
+
+        // ---------------------------
+        // Countback helper
+        // ---------------------------
+        function compareByCountback(a,b){
+          const pa=a.perHole||[];
+          const pb=b.perHole||[];
+          const sum=(arr,s,e)=>arr.slice(s,e).reduce((x,y)=>x+(Number(y)||0),0);
+
+          const aB9=sum(pa,9,18), bB9=sum(pb,9,18);
+          if(aB9!==bB9) return bB9-aB9;
+
+          const aL6=sum(pa,12,18), bL6=sum(pb,12,18);
+          if(aL6!==bL6) return bL6-aL6;
+
+          const aL3=sum(pa,15,18), bL3=sum(pb,15,18);
+          if(aL3!==bL3) return bL3-aL3;
+
+          for(let i=17;i>=0;i--){
+            const ai=Number(pa[i])||0, bi=Number(pb[i])||0;
+            if(ai!==bi) return bi-ai;
+          }
+          return 0;
+        }
+
+        // ---------------------------
+        // Compute event leaderboard
+        // ---------------------------
+        const computed = useMemo(() => {
+          if (!players.length) return [];
+
+          const rows = players.map((p,i)=>({
+            idx:i,
+            name:p.name,
+            gender:p.gender,
+            startExact:p.handicap,
+            points:p.points,
+            back9:p.back9,
+            perHole:p.perHole
+          }));
+
+          const base=[...rows].sort((a,b)=>(b.points-a.points)||compareByCountback(a,b));
+
+          const groups=[];
+          const used=new Set();
+
           for(const r of base){
             if(used.has(r.idx)) continue;
             const grpIdxs=base.filter(x=>x.points===r.points).map(x=>x.idx);
             grpIdxs.forEach(id=>used.add(id));
             groups.push(grpIdxs);
           }
-          const topGroup=groups[0].map(i=>rows.find(r=>r.idx===i));
-          let best=[topGroup[0]];
+
+          const topGroup = groups[0]?.map(i=>rows.find(r=>r.idx===i)) || [];
+          let best=topGroup.length ? [topGroup[0]] : [];
           for(let k=1;k<topGroup.length;k++){
             const cmp=compareByCountback(topGroup[k],best[0]);
             if(cmp>0) best=[topGroup[k]];
@@ -428,55 +805,47 @@
           }
           const winnerIdxSet=new Set(best.map(r=>r.idx));
 
-          let pos=1; const out=[];
-          for(let gIdx=0; gIdx<groups.length; gIdx++){
-            const g=groups[gIdx]; const start=pos; const ptsValue=POINTS_TABLE[start-1]||0;
+          let pos=1;
+          const out=[];
+
+          for(let gi=0; gi<groups.length; gi++){
+            const g=groups[gi];
+            const start=pos;
+            const ptsValue = POINTS_TABLE[start-1] || 0;
+
             for(const i of g){
-              const r=rows.find(x=>x.idx===i);
-              const isWinner=winnerIdxSet.has(i) && (gIdx===0);
-              const res=computeNewExactHandicap(r.startExact,r.gender,r.points,r.back9,isWinner);
-              out.push({...r, position:start, leaguePoints:ptsValue, isWinner, nextExact:res.nextExact, nextPlaying:res.nextPlaying});
+              const r = rows.find(x=>x.idx===i);
+              const isWinner = winnerIdxSet.has(i) && gi===0;
+
+              const hc = computeNewExactHandicap(r.startExact, r.gender, r.points, r.back9, isWinner);
+
+              out.push({
+                ...r,
+                position:start,
+                leaguePoints:ptsValue,
+                isWinner,
+                nextExact:hc.nextExact,
+                nextPlaying:hc.nextPlaying
+              });
             }
-            pos+=g.length;
+
+            pos += g.length;
           }
+
           return out.sort((a,b)=>a.position-b.position);
-        },[players]);
+        }, [players]);
 
-        async function fetchSeasonWith(c){
-          const r = await c.from('season_standings')
-            .select('name,total_points,events,best_event_points,best_hole_points,eclectic_total,best_per_hole');
-          if(r.error){
-            console.error('[winter] fetchSeason error', r.error);
-            setStatusMsg('Error: '+r.error.message);
-            return;
-          }
-          const data=r.data||[]; const map={};
-          for(const rec of data){
-            if(isTeamLike(rec.name)) continue;
-            let bph=[];
-            if(Array.isArray(rec.best_per_hole)) bph=rec.best_per_hole;
-            else if(typeof rec.best_per_hole==='string'){
-              try{ bph=JSON.parse(rec.best_per_hole||'[]')||[]; }catch(e){ bph=[]; }
-            }
-            map[rec.name]={
-              name:rec.name,
-              totalPoints:rec.total_points||0,
-              events:rec.events||0,
-              bestEventPoints:rec.best_event_points??0,
-              bestHolePoints:rec.best_hole_points??0,
-              eclecticTotal:rec.eclectic_total??0,
-              bestPerHole:(bph||[]).map(n=>Number(n)||0)
-            };
-          }
-          setSeason(map);
-        }
+        // ---------------------------
+        // Season: Add event
+        // ---------------------------
+        async function addEventToSeason() {
+          if (!computed.length) { toast("Load an event first"); return; }
+          const next = { ...season };
 
-        async function addEventToSeason(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          const next={ ...season };
-          for(const r of computed){
-            if(isTeamLike(r.name)) continue;
-            const prev=next[r.name]||{
+          for (const r of computed) {
+            if (isTeamLike(r.name)) continue;
+
+            const prev = next[r.name] || {
               name:r.name,
               totalPoints:0,
               events:0,
@@ -485,235 +854,248 @@
               bestEventPoints:0,
               bestHolePoints:0
             };
-            const eventPerHole=(r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0)));
-            const bestPerHole=Array.from({length:18},(_,idx)=>Math.max(prev.bestPerHole[idx]||0,eventPerHole[idx]||0));
-            const eclecticTotal=bestPerHole.reduce((s,v)=>s+(Number(v)||0),0);
-            const nextBestEvent=Math.max(prev.bestEventPoints||0,r.points||0);
-            const nextBestHole=Math.max(prev.bestHolePoints||0,Math.max.apply(null,[0].concat(eventPerHole)));
-            next[r.name]={ 
-              name:r.name, 
-              totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0), 
-              events:(prev.events||0)+1, 
-              bestEventPoints:nextBestEvent, 
-              bestHolePoints:nextBestHole, 
-              eclecticTotal, 
-              bestPerHole 
+
+            const eventPerHole = (r.perHole||[]).map(v=>Math.max(0,Math.min(6,Number(v)||0)));
+
+            const bestPerHole = prev.bestPerHole.map((v,i)=>Math.max(v,eventPerHole[i]));
+            const eclecticTotal = bestPerHole.reduce((s,v)=>s+v,0);
+            const bestEvent = Math.max(prev.bestEventPoints || 0, r.points || 0);
+            const bestHole = Math.max(prev.bestHolePoints || 0, Math.max(...eventPerHole));
+
+            next[r.name] = {
+              name:r.name,
+              totalPoints:(prev.totalPoints||0)+(r.leaguePoints||0),
+              events:(prev.events||0)+1,
+              bestEventPoints:bestEvent,
+              bestHolePoints:bestHole,
+              eclecticTotal,
+              bestPerHole
             };
           }
+
           setSeason(next);
-          if(client){
-            const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
-            for(const r of vals){
-              rows.push({
-                name:r.name,
-                total_points:r.totalPoints|0,
-                events:r.events|0,
-                best_event_points:(r.bestEventPoints??0)|0,
-                best_hole_points:(r.bestHolePoints??0)|0,
-                eclectic_total:(r.eclecticTotal??0)|0,
-                best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0)
-              });
-            }
-            const u = await client.from('season_standings').upsert(rows,{onConflict:'name'});
-            if(u.error){ toast('Error: '+u.error.message); } else { toast('Event added to season ✓'); }
+
+          if (client) {
+            const vals = Object.values(next).filter(r=>!isTeamLike(r.name));
+            const rows = vals.map(r => ({
+              name:r.name,
+              total_points:r.totalPoints,
+              events:r.events,
+              best_event_points:r.bestEventPoints,
+              best_hole_points:r.bestHolePoints,
+              eclectic_total:r.eclecticTotal,
+              best_per_hole:r.bestPerHole
+            }));
+
+            const res = await client.from(STANDINGS_TABLE).upsert(rows, { onConflict: 'name' });
+            if (res.error) toast("Error: " + res.error.message);
+            else toast("Event added to season ✓");
           }
         }
 
-        async function clearSeason(){
-          if(!client){ toast('No Supabase client'); return; }
-          if(!window.confirm('This will delete ALL winter league standings. Are you sure?')) return;
-          const { error } = await client.from('season_standings').delete().neq('name','');
-          if(error){ toast('Error: '+error.message); return; }
-          setSeason({});
-          toast('Season cleared');
-        }
+        // ---------------------------
+        // Season: Remove event (rollback)
+        // ---------------------------
+        async function removeEventFromSeason() {
+          if (!computed.length) { toast("Load an event first"); return; }
+          if (!window.confirm("Remove this event from the season standings?")) return;
 
-        async function removeEventFromSeason(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          if(!window.confirm('Remove this event from the winter league standings?')) return;
+          const next = { ...season };
+          const oldSeason = season;
 
-          const next={ ...season };
-          for(const r of computed){
-            if(isTeamLike(r.name)) continue;
+          for (const r of computed) {
             const prev = next[r.name];
-            if(!prev) continue;
-            const newTotal = (prev.totalPoints||0) - (r.leaguePoints||0);
-            const newEvents = Math.max(0,(prev.events||0)-1);
-            if(newTotal<=0 && newEvents===0){
+            if (!prev) continue;
+
+            const newTotal = prev.totalPoints - r.leaguePoints;
+            const newEvents = Math.max(0, prev.events - 1);
+
+            if (newTotal <= 0 && newEvents === 0) {
               delete next[r.name];
             } else {
-              next[r.name] = {
-                ...prev,
-                totalPoints:newTotal,
-                events:newEvents
-              };
+              next[r.name] = { ...prev, totalPoints:newTotal, events:newEvents };
             }
           }
 
-          const oldSeason = season;
           setSeason(next);
 
-          if(client){
-            const removedNames = Object.keys(oldSeason).filter(name => !next[name]);
-            if(removedNames.length){
-              const { error: delErr } = await client.from('season_standings').delete().in('name', removedNames);
-              if(delErr){ toast('Error: '+delErr.message); return; }
+          if (client) {
+            const removedNames = Object.keys(oldSeason).filter(k => !next[k]);
+            if (removedNames.length) {
+              await client.from(STANDINGS_TABLE).delete().in('name', removedNames);
             }
-            const rows=[]; const vals=Object.values(next).filter(r=>!isTeamLike(r.name));
-            for(const r of vals){
-              rows.push({
-                name:r.name,
-                total_points:r.totalPoints|0,
-                events:r.events|0,
-                best_event_points:(r.bestEventPoints??0)|0,
-                best_hole_points:(r.bestHolePoints??0)|0,
-                eclectic_total:(r.eclecticTotal??0)|0,
-                best_per_hole:Array.isArray(r.bestPerHole)?r.bestPerHole.map(n=>Number(n)||0):Array(18).fill(0)
-              });
-            }
-            const { error: upErr } = await client.from('season_standings').upsert(rows,{onConflict:'name'});
-            if(upErr){ toast('Error: '+upErr.message); } else { toast('Event removed from season ✓'); }
+
+            const vals = Object.values(next).filter(r=>!isTeamLike(r.name));
+            const rows = vals.map(r => ({
+              name:r.name,
+              total_points:r.totalPoints,
+              events:r.events,
+              best_event_points:r.bestEventPoints,
+              best_hole_points:r.bestHolePoints,
+              eclectic_total:r.eclecticTotal,
+              best_per_hole:r.bestPerHole
+            }));
+
+            const res = await client
+              .from(STANDINGS_TABLE)
+              .upsert(rows, { onConflict:'name' });
+
+            if (res.error) toast("Error: " + res.error.message);
+            else toast("Event removed from season ✓");
           }
         }
 
-        function exportEventCSV(){
-          if(!computed.length){ toast('Load an event first'); return; }
-          const rows=[["Name","Gender","Exact","Stableford","Back9","Pos","Pts","NextExact","NextPlay"]];
-          computed.forEach(r=>rows.push([
-            r.name,
-            r.gender,
-            Math.round(r.startExact),
-            r.points,
-            r.back9,
-            r.position,
-            r.leaguePoints,
-            r.nextExact.toFixed(1),
-            r.nextPlaying
-          ]));
-          downloadCSV(`DenSociety_${(eventName||'Event').replace(/[^a-z0-9]+/gi,'_')}.csv`,rows);
+        // ---------------------------
+        // Season: Reset Entire Table
+        // ---------------------------
+        async function clearSeason() {
+          if (!client) { toast("No client"); return; }
+          if (!window.confirm("⚠ This will delete ALL season standings. Continue?")) return;
+
+          const res = await client.from(STANDINGS_TABLE).delete().neq('name','');
+          if (res.error) toast("Error: " + res.error.message);
+          else {
+            setSeason({});
+            toast("Season cleared");
+          }
         }
 
-        // ---------- UI ----------
-        function Header(){
+        // ----------------------------------------------------
+        // Header
+        // ----------------------------------------------------
+        function Header({ eventName, statusMsg }) {
           return (
-            <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white">
+            <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white shadow">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h1 className="text-xl md:text-2xl font-bold tracking-tight">
-                    Den Society — League &amp; Eclectic
+                    Den Society — Events & Eclectic
                   </h1>
-                  <p className="text-xs/5 text-white/90">Supabase: {statusMsg}</p>
+                  <p className="text-xs text-white/90">Supabase: {statusMsg}</p>
                 </div>
                 <span className="hidden sm:inline-flex chip border-white/30 bg-white/10 text-white">
-                  {eventName||'Untitled Event'}
+                  {eventName || "Untitled Event"}
                 </span>
               </div>
             </header>
           );
         }
 
-        function Home(){
-          const [open,setOpen]=useState(true);
-          const canAct = computed.length>0;
+        // ----------------------------------------------------
+        // Event Navigation Bar
+        // ----------------------------------------------------
+        function EventNav({ setView }) {
+          return (
+            <nav className="flex flex-wrap gap-2 mb-4">
+              <button className="chip" onClick={() => setView('event')}>Event</button>
+              <button className="chip" onClick={() => setView('ratings')}>Ratings</button>
+              <button className="chip" onClick={() => setView('holes')}>Hole Analysis</button>
+              <button className="chip" onClick={() => setView('standings')}>Standings</button>
+              <button className="chip" onClick={() => setView('eclectic')}>Eclectic</button>
+              <button className="chip" onClick={() => setView('home')}>Home</button>
+            </nav>
+          );
+        }
+
+        // ----------------------------------------------------
+        // Home Menu
+        // ----------------------------------------------------
+        function Home({ setView, fileInputRef, importLocalCSV, computed, addEventToSeason, removeEventFromSeason, clearSeason }) {
+          const canAct = computed.length > 0;
+          const [open, setOpen] = useState(true);
 
           return (
             <section className="rounded-2xl p-3 md:p-4 panel-mint shadow-sm">
               <button
-                type="button"
                 className="w-full bg-white text-neutral-900 border border-squab-200 rounded-xl px-4 py-3 flex items-center justify-between"
-                onClick={()=>setOpen(v=>!v)}
-                aria-expanded={open?'true':'false'}
+                onClick={() => setOpen(v => !v)}
               >
                 <span className="font-semibold">Menu</span>
-                <span className={`transition-transform ${open?'rotate-180':''}`}>▾</span>
+                <span className={`transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
               </button>
 
-              <div className={`overflow-hidden transition-all ${open?'max-h-[2000px]':'max-h-0'}`}>
+              <div className={`overflow-hidden transition-all ${open ? 'max-h-[2000px]' : 'max-h-0'}`}>
                 <div className="mt-3 grid gap-2">
                   <button
                     className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
-                    onClick={()=>setView('past')}
+                    onClick={() => setView('past')}
                   >
-                    View Past Golf Events
+                    View Past Den Events
                   </button>
+
                   <button
                     className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
-                    onClick={()=>setView('ratings')}
+                    onClick={() => setView('ratings')}
                   >
                     View Player Ratings
                   </button>
+
                   <button
                     className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
-                    onClick={()=>setView('standings')}
+                    onClick={() => setView('holes')}
+                  >
+                    Player Hole Analysis
+                  </button>
+
+                  <button
+                    className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
+                    onClick={() => setView('standings')}
                   >
                     Check Season Standings
                   </button>
+
                   <button
                     className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
-                    onClick={()=>setView('eclectic')}
+                    onClick={() => setView('eclectic')}
                   >
                     Check Eclectic Leaderboard
                   </button>
 
+                  {/* Import CSV */}
                   <button
                     className="w-full text-left rounded-xl border border-squab-200 bg-white px-3 py-2"
-                    onClick={()=>{ fileInputRef.current && fileInputRef.current.click(); }}
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
                   >
                     Import CSV
                   </button>
+
                   <input
                     ref={fileInputRef}
                     type="file"
                     accept=".csv"
                     className="hidden"
-                    onChange={async e=>{
-                      try{
-                        const f=e.target.files&&e.target.files[0];
-                        if(!f) return;
-                        const text=await f.text();
-                        const parsed=parseSquabbitCSV(text);
-                        setPlayers(parsed.players||[]);
-                        setEventName((f.name||'').replace(/\.[^.]+$/,''));
-                        setCoursePars({
-                          men: parsed.parsMen || COURSE_DEFAULT_MEN,
-                          women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
-                        });
-                        setView('event');
-                        e.target.value='';
-                      }catch(err){ toast('Bad CSV'); console.error(err); }
+                    onChange={async e => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const text = await f.text();
+                      await importLocalCSV(text, f.name);
+                      e.target.value = '';
                     }}
                   />
 
+                  {/* Add Event to Season */}
                   <button
-                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct
-                      ?'border-squab-200 bg-white'
-                      :'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
+                    className={`w-full text-left rounded-xl border px-3 py-2 ${
+                      canAct ? 'border-squab-200 bg-white' : 'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'
+                    }`}
                     onClick={addEventToSeason}
                     disabled={!canAct}
                   >
                     Add Event → Season
                   </button>
 
+                  {/* Remove Event */}
                   <button
-                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct
-                      ?'border-amber-300 bg-amber-50 text-amber-800'
-                      :'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
+                    className={`w-full text-left rounded-xl border px-3 py-2 ${
+                      canAct ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'
+                    }`}
                     onClick={removeEventFromSeason}
                     disabled={!canAct}
                   >
                     Remove Event ← Season
                   </button>
 
-                  <button
-                    className={`w-full text-left rounded-xl border px-3 py-2 ${canAct
-                      ?'border-squab-200 bg-white'
-                      :'border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed'}`}
-                    onClick={exportEventCSV}
-                    disabled={!canAct}
-                  >
-                    Download CSV
-                  </button>
-
+                  {/* Delete Season */}
                   <button
                     className="w-full text-left rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-red-700"
                     onClick={clearSeason}
@@ -726,32 +1108,35 @@
           );
         }
 
-        function PastEvents(){
+        // ----------------------------------------------------
+        // Past Events (Supabase)
+        // ----------------------------------------------------
+        function PastEvents({ sharedGroups, loadShared, setView }) {
           return (
             <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-200 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-squab-900">
-                  Past Den Society Games
-                </h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
+                <h2 className="text-lg font-semibold text-squab-900">Past Den Society Events</h2>
+                <button className="btn border border-squab-200" onClick={() => setView('home')}>Back</button>
               </div>
-              {sharedGroups.length===0 && (
+
+              {sharedGroups.length === 0 && (
                 <div className="text-sm text-neutral-600 p-2">No shared CSVs yet.</div>
               )}
-              {sharedGroups.map(group=> (
+
+              {sharedGroups.map(group => (
                 <div key={group.year} className="mb-3">
                   <div className="text-xs text-neutral-600 mb-1">{group.year}</div>
                   <select
                     className="w-full rounded-xl border border-squab-200 px-3 py-2 bg-white"
-                    onChange={async e=>{
-                      const idx=e.target.value;
-                      if(idx==='') return;
-                      const item=group.events[Number(idx)];
+                    onChange={async e => {
+                      const idx = e.target.value;
+                      if (!idx) return;
+                      const item = group.events[Number(idx)];
                       await loadShared(item);
                     }}
                   >
                     <option value="">Select an event…</option>
-                    {group.events.map((item,i)=> (
+                    {group.events.map((item, i) => (
                       <option key={item.path} value={i}>{item.name}</option>
                     ))}
                   </select>
@@ -761,15 +1146,15 @@
           );
         }
 
-        function EventScreen(){
+        // ----------------------------------------------------
+        // Event Screen
+        // ----------------------------------------------------
+        function EventScreen({ computed, setView }) {
           return (
             <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">
-                  Event — {eventName || 'Selected Event'}
-                </h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('past')}>Back</button>
-              </div>
+              <EventNav setView={setView} />
+
+              <h2 className="text-lg font-semibold text-squab-900 mb-3">Event Leaderboard</h2>
 
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
@@ -781,18 +1166,20 @@
                       <th>Stableford</th>
                       <th>Back9</th>
                       <th>Pts</th>
-                      <th>New Handicap</th>
+                      <th>New Hcap</th>
                     </tr>
                   </thead>
+
                   <tbody className="[&_tr:nth-child(even)]:bg-squab-50">
-                    {computed.length===0 && (
+                    {computed.length === 0 && (
                       <tr>
                         <td colSpan="7" className="py-3 text-neutral-600">
-                          Pick an event to see players.
+                          Load an event to see results.
                         </td>
                       </tr>
                     )}
-                    {computed.map((r,i)=>(
+
+                    {computed.map((r, i) => (
                       <tr key={i} className="border-b border-squab-200">
                         <td>{r.position}</td>
                         <td className="whitespace-nowrap">{r.name}</td>
@@ -806,105 +1193,105 @@
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-neutral-600 mt-2">
-                Ties share the highest slot. Winner by countback: Back 9 → Last 6 → Last 3 → 18th → 17th … 1st.
-              </p>
             </section>
           );
         }
 
-        function Ratings(){
-          const menPars   = coursePars.men   || COURSE_DEFAULT_MEN;
-          const womenPars = coursePars.women || COURSE_DEFAULT_WOMEN;
+        // ----------------------------------------------------
+        // Player Ratings Screen
+        // ----------------------------------------------------
+        function Ratings({ computed, coursePars, setView }) {
+          const menPars = coursePars.men;
+          const womenPars = coursePars.women;
 
           const ratingLabel = avg =>
-            avg>=3   ? 'Excellent' :
-            avg>=2.5 ? 'Good'      :
-            avg>=2   ? 'Solid'     :
-            avg>=1.5 ? 'Needs work': 'Struggle';
+            avg >= 3 ? 'Excellent' :
+            avg >= 2.5 ? 'Good' :
+            avg >= 2 ? 'Solid' :
+            avg >= 1.5 ? 'Needs Work' :
+            'Struggle';
 
           const badgeClass = avg =>
-            avg>=3   ? 'bg-emerald-100 text-emerald-800' :
-            avg>=2.5 ? 'bg-emerald-50 text-emerald-700'  :
-            avg>=2   ? 'bg-neutral-100 text-neutral-800' :
-            avg>=1.5 ? 'bg-amber-100 text-amber-800'     :
-                       'bg-red-100 text-red-800';
+            avg >= 3 ? 'bg-emerald-100 text-emerald-800' :
+            avg >= 2.5 ? 'bg-emerald-50 text-emerald-700' :
+            avg >= 2 ? 'bg-neutral-100 text-neutral-800' :
+            avg >= 1.5 ? 'bg-amber-100 text-amber-800' :
+            'bg-red-100 text-red-800';
 
-          const eventParAverages=(perHole,pars)=>{
-            const sums={3:{s:0,c:0},4:{s:0,c:0},5:{s:0,c:0}};
-            for(let i=0;i<Math.min(18,perHole.length,pars.length);i++){
-              const pts=Number(perHole[i])||0;
-              const par=Number(pars[i])||4;
-              if(sums[par]){ sums[par].s+=pts; sums[par].c++; }
+          const eventParAverages = (perHole, pars) => {
+            const sums = {3:{s:0,c:0}, 4:{s:0,c:0}, 5:{s:0,c:0}};
+            for (let i=0; i<18; i++) {
+              const pts = Number(perHole[i]) || 0;
+              const par = pars[i] || 4;
+              if (sums[par]) {
+                sums[par].s += pts;
+                sums[par].c++;
+              }
             }
-            const avg=t=>sums[t].c?(sums[t].s/sums[t].c):0;
-            return {p3:avg(3),p4:avg(4),p5:avg(5)};
+            const avg = t => sums[t].c ? sums[t].s / sums[t].c : 0;
+            return {
+              p3: avg(3),
+              p4: avg(4),
+              p5: avg(5)
+            };
           };
 
-          const ratings = React.useMemo(()=>{
-            const out=[];
-            for(const r of computed){
-              const pars = (r.gender==='F') ? womenPars : menPars;
-              const av = eventParAverages(r.perHole||[], pars);
-              out.push({
+          const ratings = useMemo(() => {
+            return computed.map(r => {
+              const pars = r.gender === 'F' ? womenPars : menPars;
+              const av = eventParAverages(r.perHole, pars);
+              return {
                 name: r.name,
                 p3: to1(av.p3),
                 p4: to1(av.p4),
                 p5: to1(av.p5),
                 total: to1(av.p3 + av.p4 + av.p5)
-              });
-            }
-            return out.sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
-          },[computed, menPars, womenPars]);
+              };
+            }).sort((a,b)=>b.total-a.total);
+          }, [computed, menPars, womenPars]);
 
           return (
             <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">
-                  Player Ratings — {eventName||'This Event'}
-                </h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
-              </div>
+              <EventNav setView={setView} />
+
+              <h2 className="text-lg font-semibold text-squab-900 mb-3">Player Ratings</h2>
 
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="border-b border-squab-200 text-left">
                       <th>Name</th>
-                      <th>Par-3 avg</th><th>Par-3 rating</th>
-                      <th>Par-4 avg</th><th>Par-4 rating</th>
-                      <th>Par-5 avg</th><th>Par-5 rating</th>
+                      <th>Par-3 Avg</th>
+                      <th>Rating</th>
+                      <th>Par-4 Avg</th>
+                      <th>Rating</th>
+                      <th>Par-5 Avg</th>
+                      <th>Rating</th>
                     </tr>
                   </thead>
+
                   <tbody>
-                    {ratings.length===0 && (
-                      <tr>
-                        <td colSpan="7" className="py-3 text-neutral-600">
-                          Import a Squabbit CSV or pick one from Past Events to see ratings.
-                        </td>
-                      </tr>
-                    )}
-                    {ratings.map(r=> (
+                    {ratings.map(r => (
                       <tr key={r.name} className="border-b border-squab-200">
                         <td className="font-medium">{r.name}</td>
 
                         <td>{r.p3.toFixed(1)}</td>
                         <td>
-                          <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p3)}`}>
+                          <span className={`px-2 py-0.5 rounded-lg text-xs ${badgeClass(r.p3)}`}>
                             {ratingLabel(r.p3)}
                           </span>
                         </td>
 
                         <td>{r.p4.toFixed(1)}</td>
                         <td>
-                          <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p4)}`}>
+                          <span className={`px-2 py-0.5 rounded-lg text-xs ${badgeClass(r.p4)}`}>
                             {ratingLabel(r.p4)}
                           </span>
                         </td>
 
                         <td>{r.p5.toFixed(1)}</td>
                         <td>
-                          <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${badgeClass(r.p5)}`}>
+                          <span className={`px-2 py-0.5 rounded-lg text-xs ${badgeClass(r.p5)}`}>
                             {ratingLabel(r.p5)}
                           </span>
                         </td>
@@ -917,38 +1304,44 @@
           );
         }
 
-        function Standings(){
+        // ----------------------------------------------------
+        // Season Standings
+        // ----------------------------------------------------
+        function Standings({ season, setView }) {
           const list = Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
+            .filter(r => !isTeamLike(r.name))
             .sort((a,b)=>(b.totalPoints-a.totalPoints)||a.name.localeCompare(b.name));
+
           return (
             <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Season Standings</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
-              </div>
+              <EventNav setView={setView} />
+
+              <h2 className="text-lg font-semibold text-squab-900 mb-3">Season Standings</h2>
+
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="border-b border-squab-200 text-left">
-                      <th>Rank</th><th>Name</th><th>Events</th><th>Total</th><th>Best Event</th><th>Best Hole</th><th>Eclectic</th>
+                      <th>Rank</th>
+                      <th>Name</th>
+                      <th>Events</th>
+                      <th>Total</th>
+                      <th>Best Event</th>
+                      <th>Best Hole</th>
+                      <th>Eclectic</th>
                     </tr>
                   </thead>
+
                   <tbody>
-                    {list.length===0 && (
-                      <tr>
-                        <td colSpan="7" className="py-3 text-neutral-600">No season data found.</td>
-                      </tr>
-                    )}
                     {list.map((r,i)=>(
                       <tr key={r.name} className="border-b border-squab-200">
                         <td>{i+1}</td>
                         <td>{r.name}</td>
                         <td>{r.events}</td>
                         <td>{r.totalPoints}</td>
-                        <td>{r.bestEventPoints??0}</td>
-                        <td>{r.bestHolePoints??0}</td>
-                        <td>{r.eclecticTotal??0}</td>
+                        <td>{r.bestEventPoints}</td>
+                        <td>{r.bestHolePoints}</td>
+                        <td>{r.eclecticTotal}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -958,18 +1351,22 @@
           );
         }
 
-        function Eclectic(){
+        // ----------------------------------------------------
+        // Eclectic Leaderboard
+        // ----------------------------------------------------
+        function Eclectic({ season, setView }) {
           const list = Object.values(season)
-            .filter(r=>!isTeamLike(r.name))
-            .sort((a,b)=>((b.eclecticTotal??0)-(a.eclecticTotal??0))||a.name.localeCompare(b.name));
+            .filter(r => !isTeamLike(r.name))
+            .sort((a,b)=>((b.eclecticTotal||0)-(a.eclecticTotal||0)));
+
           return (
             <section className="rounded-2xl p-3 md:p-5 bg-white border border-squab-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-squab-900">Eclectic Leaderboard</h2>
-                <button className="btn border border-squab-200" onClick={()=>setView('home')}>Back</button>
-              </div>
+              <EventNav setView={setView} />
+
+              <h2 className="text-lg font-semibold text-squab-900 mb-3">Eclectic Leaderboard</h2>
+
               <div className="overflow-auto">
-                <table className="min-w-full text-sm">
+                <table className="min-w-full text-xs md:text-sm">
                   <thead>
                     <tr className="border-b border-squab-200 text-left">
                       <th>Rank</th>
@@ -978,18 +1375,14 @@
                       {Array.from({length:18},(_,i)=>(<th key={i}>H{i+1}</th>))}
                     </tr>
                   </thead>
+
                   <tbody>
-                    {list.length===0 && (
-                      <tr>
-                        <td colSpan="21" className="py-3 text-neutral-600">No eclectic yet.</td>
-                      </tr>
-                    )}
                     {list.map((r,i)=>(
                       <tr key={r.name} className="border-b border-squab-200">
                         <td>{i+1}</td>
                         <td>{r.name}</td>
-                        <td>{r.eclecticTotal??0}</td>
-                        {(Array.isArray(r.bestPerHole)?r.bestPerHole:Array(18).fill(0)).map((v,ix)=>(
+                        <td>{r.eclecticTotal}</td>
+                        {(r.bestPerHole||Array(18).fill(0)).map((v,ix)=>(
                           <td key={ix}>{v}</td>
                         ))}
                       </tr>
@@ -1001,21 +1394,250 @@
           );
         }
 
+        // ----------------------------------------------------
+        // Player Hole Analysis
+        // ----------------------------------------------------
+        function HoleAnalysis({
+          computed,
+          selectedPlayer,
+          setSelectedPlayer,
+          coursePars,
+          courseYards,
+          strokeIndex,
+          setView
+        }) {
+          if (!computed.length) {
+            return (
+              <section className="rounded-2xl p-4 bg-white border border-squab-200 shadow-sm">
+                <EventNav setView={setView} />
+                <p className="text-neutral-600">Load an event to see hole analysis.</p>
+              </section>
+            );
+          }
+
+          const playerNames = computed.map((p) => p.name);
+          const player = computed.find((p) => p.name === selectedPlayer) || computed[0];
+
+          const perHole = player.perHole || Array(18).fill(0);
+          const pars = coursePars[player.gender === "F" ? "women" : "men"];
+          const yards = courseYards[player.gender === "F" ? "women" : "men"];
+
+          const fieldAvg = Array(18).fill(0);
+          for (let h = 0; h < 18; h++) {
+            const vals = computed.map((p) => Number(p.perHole[h]) || 0);
+            fieldAvg[h] = vals.reduce((a, b) => a + b, 0) / vals.length;
+          }
+
+          const holeType = (h) => {
+            const par = pars[h];
+            const yd = yards[h];
+            if (par === 3) return "Par 3";
+            if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
+            if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
+            return "Unknown";
+          };
+
+          const gains = perHole.map((p, i) => p - fieldAvg[i]);
+          const totalGain = gains.reduce((a, b) => a + b, 0);
+
+          const bestHole = gains
+            .map((g, i) => ({ hole: i + 1, g }))
+            .sort((a, b) => b.g - a.g)[0];
+
+          const worstHole = gains
+            .map((g, i) => ({ hole: i + 1, g }))
+            .sort((a, b) => a.g - b.g)[0];
+
+          const par3 = [];
+          const par4 = [];
+          const par5 = [];
+
+          for (let i = 0; i < 18; i++) {
+            if (pars[i] === 3) par3.push(perHole[i]);
+            if (pars[i] === 4) par4.push(perHole[i]);
+            if (pars[i] === 5) par5.push(perHole[i]);
+          }
+
+          const avgP3 = par3.reduce((a, b) => a + b, 0) / par3.length;
+          const avgP4 = par4.reduce((a, b) => a + b, 0) / par4.length;
+          const avgP5 = par5.reduce((a, b) => a + b, 0) / par5.length;
+
+          return (
+            <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
+              <EventNav setView={setView} />
+
+              <h2 className="text-lg font-semibold text-squab-900 mb-3">
+                Player Hole Analysis
+              </h2>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-1">Select Player</label>
+                <select
+                  className="w-full max-w-xs rounded-xl border border-squab-200 px-3 py-2 bg-white"
+                  value={selectedPlayer}
+                  onChange={(e) => setSelectedPlayer(e.target.value)}
+                >
+                  {playerNames.map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-4 mb-5">
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">Total Gain vs Field</div>
+                  <div className="text-xl font-bold">{to1(totalGain)}</div>
+                </div>
+
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">Best Hole</div>
+                  <div className="text-xl font-bold">
+                    Hole {bestHole.hole} ({to1(bestHole.g)} pts vs field)
+                  </div>
+                </div>
+
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">Worst Hole</div>
+                  <div className="text-xl font-bold">
+                    Hole {worstHole.hole} ({to1(worstHole.g)} pts vs field)
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-4 mb-6">
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">Avg Par-3 Score</div>
+                  <div className="text-xl font-semibold">{to1(avgP3)}</div>
+                </div>
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">Avg Par-4 Score</div>
+                  <div className="text-xl font-semibold">{to1(avgP4)}</div>
+                </div>
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">Avg Par-5 Score</div>
+                  <div className="text-xl font-semibold">{to1(avgP5)}</div>
+                </div>
+              </div>
+
+              <div className="overflow-auto">
+                <table className="min-w-full text-xs md:text-sm">
+                  <thead>
+                    <tr className="border-b border-squab-200 bg-squab-50 text-left">
+                      <th>Hole</th>
+                      <th>Par</th>
+                      <th>Yards</th>
+                      <th>SI</th>
+                      <th>Pts</th>
+                      <th>Field Avg</th>
+                      <th>Gain</th>
+                      <th>Type</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {perHole.map((pts, i) => (
+                      <tr key={i} className="border-b">
+                        <td>{i + 1}</td>
+                        <td>{pars[i]}</td>
+                        <td>{yards[i]}</td>
+                        <td>{strokeIndex[i]}</td>
+                        <td className="font-semibold">{pts}</td>
+                        <td>{to1(fieldAvg[i])}</td>
+                        <td
+                          className={
+                            gains[i] >= 0
+                              ? "text-emerald-600 font-semibold"
+                              : "text-red-600 font-semibold"
+                          }
+                        >
+                          {to1(gains[i])}
+                        </td>
+                        <td>{holeType(i)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        }
+
+        // ----------------------------------------------------
+        // Main App return
+        // ----------------------------------------------------
         return (
           <div className="min-h-screen p-4 sm:p-6">
-            <div className="max-w-4xl mx-auto space-y-4">
-              <Header />
-              {view==='home' && <Home />}
-              {view==='past' && <PastEvents />}
-              {view==='event' && <EventScreen />}
-              {view==='ratings' && <Ratings />}
-              {view==='standings' && <Standings />}
-              {view==='eclectic' && <Eclectic />}
+            <div className="max-w-5xl mx-auto space-y-4">
+              <Header eventName={eventName} statusMsg={statusMsg} />
+
+              {view === 'home' && (
+                <Home
+                  setView={setView}
+                  fileInputRef={fileInputRef}
+                  importLocalCSV={importLocalCSV}
+                  computed={computed}
+                  addEventToSeason={addEventToSeason}
+                  removeEventFromSeason={removeEventFromSeason}
+                  clearSeason={clearSeason}
+                />
+              )}
+
+              {view === 'past' && (
+                <PastEvents
+                  sharedGroups={sharedGroups}
+                  loadShared={loadShared}
+                  setView={setView}
+                />
+              )}
+
+              {view === 'event' && (
+                <EventScreen
+                  computed={computed}
+                  setView={setView}
+                />
+              )}
+
+              {view === 'ratings' && (
+                <Ratings
+                  computed={computed}
+                  coursePars={coursePars}
+                  setView={setView}
+                />
+              )}
+
+              {view === 'holes' && (
+                <HoleAnalysis
+                  computed={computed}
+                  selectedPlayer={selectedPlayer}
+                  setSelectedPlayer={setSelectedPlayer}
+                  coursePars={coursePars}
+                  courseYards={courseYards}
+                  strokeIndex={strokeIndex}
+                  setView={setView}
+                />
+              )}
+
+              {view === 'standings' && (
+                <Standings
+                  season={season}
+                  setView={setView}
+                />
+              )}
+
+              {view === 'eclectic' && (
+                <Eclectic
+                  season={season}
+                  setView={setView}
+                />
+              )}
             </div>
           </div>
         );
-      }
+      } // end of App()
 
+      // ----------------------------------------------------
+      // Mount React App
+      // ----------------------------------------------------
       ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
