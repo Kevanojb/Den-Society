@@ -125,7 +125,6 @@
 
       // -----------------------
       // Default / fallback course data
-      // (Chart Hills 66 blue tees – used only if no CourseLayout block is present)
       // -----------------------
 
       const COURSE_DEFAULT_MEN = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
@@ -334,7 +333,7 @@
       }
 
       // -----------------------
-      // Main Squabbit CSV parser (now CourseLayout aware)
+      // Main Squabbit CSV parser
       // -----------------------
 
       function parseSquabbitCSV(text){
@@ -536,13 +535,13 @@
         const [view, setView] = useState('home');
         const [selectedPlayer, setSelectedPlayer] = useState('');
 
-        // Supabase config (same project, Den bucket + season_standings)
+        // Supabase config
         const SUPA_URL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
         const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
 
         const BUCKET = "den_events";
         const STANDINGS_TABLE = "season_standings";
-        const PREFIX = "events";
+        const PREFIX = "events"; // folder in bucket
 
         const [client, setClient] = useState(null);
         const [statusMsg, setStatusMsg] = useState("Connecting…");
@@ -606,33 +605,7 @@
           return () => { cancelled = true };
         }, []);
 
-        // Load shared events from Supabase Storage
-        async function refreshShared(c) {
-          c = c || client;
-          if (!c) return;
-
-          const r = await c.storage.from(BUCKET).list(PREFIX, {
-            limit: 1000,
-            sortBy: { column: "name", order: "asc" }
-          });
-
-          if (r.error) {
-            toast("Storage error: " + r.error.message);
-            return;
-          }
-
-          const data = (r.data || [])
-            .filter(x => !x.name.startsWith('.') && /\.csv$/i.test(x.name))
-            .map(x => ({
-              name: x.name.replace(/\.csv$/i, ''),
-              file: x.name,
-              path: `${PREFIX}/${x.name}`
-            }));
-
-          setShared(data);
-          setSharedGroups(groupEventsByYear(data));
-        }
-
+        // Group events by year
         function groupEventsByYear(files) {
           const groups = {};
           for (const f of files) {
@@ -648,9 +621,41 @@
             }));
         }
 
+        // Load shared events from Supabase Storage
+        async function refreshShared(c) {
+          c = c || client;
+          if (!c) return;
+
+          const r = await c.storage.from(BUCKET).list(PREFIX, {
+            limit: 1000,
+            sortBy: { column: "name", order: "asc" }
+          });
+
+          if (r.error) {
+            toast("Storage error: " + r.error.message);
+            return;
+          }
+
+          // RELAXED FILTER: only ignore hidden dot-files, don't require .csv extension
+          const data = (r.data || [])
+            .filter(x => !x.name.startsWith('.'))
+            .map(x => ({
+              name: x.name.replace(/\.csv$/i, ''),
+              file: x.name,
+              path: `${PREFIX}/${x.name}`
+            }));
+
+          setShared(data);
+          setSharedGroups(groupEventsByYear(data));
+        }
+
         // Load event from Supabase
         async function loadShared(item) {
-          if (!client) return;
+          if (!client) {
+            alert("Supabase client not ready");
+            return;
+          }
+
           const r = await client.storage.from(BUCKET).download(item.path);
           if (r.error) {
             alert("Download failed: " + r.error.message);
@@ -1094,6 +1099,7 @@
           );
         }
 
+        // Past events screen: one dropdown per year, year based on filename
         function PastEvents({ sharedGroups, loadShared, setView }) {
           return (
             <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-200 shadow-sm">
@@ -1113,7 +1119,7 @@
                     className="w-full rounded-xl border border-squab-200 px-3 py-2 bg-white"
                     onChange={async e => {
                       const idx = e.target.value;
-                      if (!idx) return;
+                      if (idx === "") return;         {/* only ignore the placeholder */}
                       const item = group.events[Number(idx)];
                       await loadShared(item);
                     }}
