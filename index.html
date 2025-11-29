@@ -98,6 +98,15 @@
         return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
       };
 
+      const downloadCSV = (filename, rows) => {
+        const csv = rows.map(r => r.map(csvEscape).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+      };
+
       const to1 = x => Math.round((Number(x)||0)*10)/10;
 
       function toast(msg){
@@ -115,24 +124,20 @@
       }
 
       // -----------------------
-      // Default Course Data (fallback only – DB will override)
-      // Using Chart Hills 66/55 from card
+      // Default / fallback course data
+      // (Chart Hills 66 blue tees – used only if no CourseLayout block is present)
       // -----------------------
 
-      const COURSE_DEFAULT_MEN = [
-        5,4,3,4,5,4,3,4,4,
-        4,3,5,4,4,4,5,3,4
-      ];
-      const COURSE_DEFAULT_WOMEN = COURSE_DEFAULT_MEN.slice();
+      const COURSE_DEFAULT_MEN = [4,4,3,4,5,4,3,4,4, 4,5,4,3,4,4,5,3,4];
+      const COURSE_DEFAULT_WOMEN = [4,4,3,4,5,4,3,4,4, 4,4,5,3,4,4,5,3,4];
 
       const COURSE_YARDS_MEN = [
         564,443,166,402,487,300,185,404,353,
         407,159,529,416,375,409,505,136,413
       ];
-
       const COURSE_YARDS_WOMEN = [
-        480,367,113,337,437,226,137,350,280,
-        382,124,411,352,309,362,471,75,347
+        498,364,111,329,420,230,147,358,276,
+        391,127,412,347,305,363,402,78,345
       ];
 
       const COURSE_STROKE_INDEX = [
@@ -182,7 +187,7 @@
       }
 
       // -----------------------
-      // CSV Parsing (Squabbit Friendly)
+      // CSV Parsing helpers
       // -----------------------
 
       const isTeamLike = name => {
@@ -228,14 +233,115 @@
       }
 
       // -----------------------
-      // Parse Entire Squabbit CSV
+      // CourseLayout parser
+      // -----------------------
+
+      function parseCourseLayout(lines) {
+        let startIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+          const k = (lines[i][0] || '').trim().toLowerCase();
+          if (k === 'courselayout') {
+            startIdx = i;
+            break;
+          }
+        }
+        if (startIdx < 0) return null;
+
+        let courseName = '';
+        let men = null;
+        let women = null;
+
+        let i = startIdx + 1;
+        while (i < lines.length) {
+          const row = lines[i] || [];
+          const key = (row[0] || '').trim().toLowerCase();
+          if (!key) { i++; continue; }
+
+          if (key === 'course') {
+            courseName = (row[1] || '').trim() || courseName;
+            i++;
+            continue;
+          }
+
+          if (key === 'tee') {
+            const teeName = (row[1] || '').trim();
+            const genderRaw = (row[2] || '').trim().toUpperCase();
+            const gender = genderRaw === 'F' ? 'F' : 'M';
+
+            const header = lines[i + 1] || [];
+            const hKey = (header[0] || '').trim().toLowerCase();
+            if (hKey !== 'hole') { i++; continue; }
+
+            const colPar = header.findIndex(c => String(c).trim().toLowerCase() === 'par');
+            const colYards = header.findIndex(c => String(c).trim().toLowerCase() === 'yards');
+            const colSI = header.findIndex(c => String(c).trim().toLowerCase() === 'si');
+
+            const holes = Array(18).fill(null).map((_, idx) => ({
+              hole: idx + 1,
+              par: 0,
+              yards: 0,
+              si: 0
+            }));
+
+            let j = i + 2;
+            while (j < lines.length) {
+              const r = lines[j] || [];
+              const first = (r[0] || '').trim().toLowerCase();
+
+              if (!first || first === 'tee' || first === 'course' || first === 'courselayout') break;
+
+              const h = parseInt(r[0], 10);
+              if (!Number.isFinite(h) || h < 1 || h > 18) break;
+
+              const par = colPar >= 0 ? parseInt(r[colPar] || '0', 10) : 0;
+              const yards = colYards >= 0 ? parseInt(r[colYards] || '0', 10) : 0;
+              const si = colSI >= 0 ? parseInt(r[colSI] || '0', 10) : 0;
+
+              holes[h - 1] = { hole: h, par, yards, si };
+              j++;
+            }
+
+            const pars = holes.map(h => h.par || 0);
+            const yards = holes.map(h => h.yards || 0);
+            const siArr = holes.map(h => h.si || 0);
+
+            if (gender === 'F') {
+              women = { pars, yards, si: siArr, teeName };
+            } else {
+              men = { pars, yards, si: siArr, teeName };
+            }
+
+            i = j;
+            continue;
+          }
+
+          i++;
+        }
+
+        if (!men && !women) return null;
+        if (!men && women) men = women;
+        if (!women && men) women = men;
+
+        return {
+          courseName,
+          parsMen: men.pars,
+          yardsMen: men.yards,
+          strokeIndexMen: men.si,
+          parsWomen: women.pars,
+          yardsWomen: women.yards,
+          strokeIndexWomen: women.si
+        };
+      }
+
+      // -----------------------
+      // Main Squabbit CSV parser (now CourseLayout aware)
       // -----------------------
 
       function parseSquabbitCSV(text){
         const rows = text.replace(/\r/g,'').split('\n');
         const lines = rows.map(splitSmart);
 
-        // --- Detect PAR row ---
+        // --- fallback PAR row (old CSVs) ---
         let parsedPars=null;
         for(let i=0;i<lines.length;i++){
           const row=lines[i];
@@ -259,6 +365,16 @@
         if(!parsedPars || parsedPars.length!==18){
           parsedPars = COURSE_DEFAULT_MEN.slice();
         }
+
+        // --- CourseLayout block (preferred) ---
+        const layout = parseCourseLayout(lines);
+
+        let parsMen   = layout?.parsMen   || parsedPars;
+        let parsWomen = layout?.parsWomen || parsedPars;
+        let yardsMen  = layout?.yardsMen  || COURSE_YARDS_MEN;
+        let yardsWomen= layout?.yardsWomen|| COURSE_YARDS_WOMEN;
+        let strokeMen = layout?.strokeIndexMen || COURSE_STROKE_INDEX;
+        let strokeWomen = layout?.strokeIndexWomen || strokeMen;
 
         // --- Roster detection ---
         let playerHeaderRow=-1;
@@ -404,35 +520,29 @@
 
         return {
           players: finalPlayers,
-          parsMen: parsedPars,
-          parsWomen: parsedPars,
-          yardsMen: COURSE_YARDS_MEN,
-          yardsWomen: COURSE_YARDS_WOMEN,
-          strokeIndex: COURSE_STROKE_INDEX
+          parsMen,
+          parsWomen,
+          yardsMen,
+          yardsWomen,
+          strokeIndexMen: strokeMen,
+          strokeIndexWomen: strokeWomen
         };
       }
 
-      // ---------------------------
-      // App Component
-      // ---------------------------
+      // ----------------------------------------------------
+      // App Component (Den Society)
+      // ----------------------------------------------------
       function App() {
-        const [view, setView] = useState('home'); 
+        const [view, setView] = useState('home');
         const [selectedPlayer, setSelectedPlayer] = useState('');
-        
-        // Supabase config (update for your project if needed)
+
+        // Supabase config (same project, Den bucket + season_standings)
         const SUPA_URL = "https://mqknahdfpqxrpgpxqtus.supabase.co";
         const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xa25haGRmcHF4cnBncHhxdHVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0NTU3MDYsImV4cCI6MjA3ODAzMTcwNn0.GTUVsrRJ-MClMg96vuHZpUtAnUFtCsJvuLiiE0D-fCc";
 
-        // Den events bucket (for Squabbit CSVs)
-        const BUCKET = "den-events";
-        const PREFIX = "events";
-
-        // Course layout tables
-        const COURSES_TABLE = "courses";
-        const COURSE_HOLES_TABLE = "course_holes";
-
-        // Season standings table
+        const BUCKET = "den_events";
         const STANDINGS_TABLE = "season_standings";
+        const PREFIX = "events";
 
         const [client, setClient] = useState(null);
         const [statusMsg, setStatusMsg] = useState("Connecting…");
@@ -442,7 +552,7 @@
 
         const [players, setPlayers] = useState([]);
         const [season, setSeason] = useState({});
-        const [eventName, setEventName] = useState("Den Society Event");
+        const [eventName, setEventName] = useState("Den Society");
 
         const [coursePars, setCoursePars] = useState({
           men: COURSE_DEFAULT_MEN,
@@ -454,13 +564,14 @@
           women: COURSE_YARDS_WOMEN
         });
 
-        const [strokeIndex, setStrokeIndex] = useState(COURSE_STROKE_INDEX);
+        const [courseStrokeIndex, setCourseStrokeIndex] = useState({
+          men: COURSE_STROKE_INDEX,
+          women: COURSE_STROKE_INDEX
+        });
 
         const fileInputRef = useRef(null);
 
-        // ---------------------------
         // Init Supabase + fetch season + shared events
-        // ---------------------------
         useEffect(() => {
           let cancelled = false;
 
@@ -495,132 +606,7 @@
           return () => { cancelled = true };
         }, []);
 
-        // ---------------------------
-        // Course lookup via Supabase tables
-        // ---------------------------
-        async function applyCourseFromDb(courseHint, parsedFromSquabbit){
-          const applyFallback = () => {
-            setCoursePars({
-              men: parsedFromSquabbit.parsMen || COURSE_DEFAULT_MEN,
-              women: parsedFromSquabbit.parsWomen || parsedFromSquabbit.parsMen || COURSE_DEFAULT_WOMEN
-            });
-            setCourseYards({
-              men: parsedFromSquabbit.yardsMen || COURSE_YARDS_MEN,
-              women: parsedFromSquabbit.yardsWomen || COURSE_YARDS_WOMEN
-            });
-            setStrokeIndex(parsedFromSquabbit.strokeIndex || COURSE_STROKE_INDEX);
-          };
-
-          if (!client) {
-            applyFallback();
-            return;
-          }
-
-          try {
-            const hint = (courseHint || '').toLowerCase().replace(/\.[^.]+$/,'');
-
-            const { data: courses, error } = await client
-              .from(COURSES_TABLE)
-              .select('id,name');
-
-            if (error || !courses || !courses.length) {
-              applyFallback();
-              return;
-            }
-
-            const hintTokens = hint.split(/[^a-z0-9]+/i).filter(t => t && t.length>2);
-
-            function scoreCourseName(courseName){
-              const tokens = courseName.toLowerCase().split(/[^a-z0-9]+/i).filter(t => t && t.length>2);
-              if(!hintTokens.length || !tokens.length) return 0;
-              let score=0;
-              for(const t of hintTokens){
-                if(tokens.includes(t)) score+=1;
-              }
-              return score;
-            }
-
-            let bestCourse = null;
-            let bestScore = 0;
-            for (const c of courses){
-              const s = scoreCourseName(c.name);
-              if (s > bestScore){
-                bestScore = s;
-                bestCourse = c;
-              }
-            }
-
-            if (!bestCourse || bestScore === 0){
-              applyFallback();
-              return;
-            }
-
-            const { data: holes, error: holesError } = await client
-              .from(COURSE_HOLES_TABLE)
-              .select('hole,par_men,yards_men,par_women,yards_women,stroke_index')
-              .eq('course_id', bestCourse.id)
-              .order('hole', { ascending: true });
-
-            if (holesError || !holes || !holes.length){
-              applyFallback();
-              return;
-            }
-
-            const parsMen = Array(18).fill(null);
-            const parsWomen = Array(18).fill(null);
-            const yardsMen = Array(18).fill(null);
-            const yardsWomen = Array(18).fill(null);
-            const si = Array(18).fill(null);
-
-            for (const h of holes){
-              const idx = (h.hole || 0) - 1;
-              if (idx < 0 || idx >= 18) continue;
-              if (h.par_men != null) parsMen[idx] = Number(h.par_men);
-              if (h.par_women != null) parsWomen[idx] = Number(h.par_women);
-              if (h.yards_men != null) yardsMen[idx] = Number(h.yards_men);
-              if (h.yards_women != null) yardsWomen[idx] = Number(h.yards_women);
-              if (h.stroke_index != null) si[idx] = Number(h.stroke_index);
-            }
-
-            function clean(arr, fallback){
-              const out = Array(18);
-              for(let i=0;i<18;i++){
-                const v = Number(arr[i]);
-                out[i] = Number.isFinite(v) && v>0 ? v : (fallback ? fallback[i] : 0);
-              }
-              return out;
-            }
-
-            const pm = clean(parsMen, parsedFromSquabbit.parsMen || COURSE_DEFAULT_MEN);
-            const ym = clean(yardsMen, parsedFromSquabbit.yardsMen || COURSE_YARDS_MEN);
-            const siClean = clean(si, parsedFromSquabbit.strokeIndex || COURSE_STROKE_INDEX);
-
-            const pw = parsWomen.some(x=>Number(x)>0)
-              ? clean(parsWomen, pm)
-              : null;
-
-            const yw = yardsWomen.some(x=>Number(x)>0)
-              ? clean(yardsWomen, ym)
-              : null;
-
-            setCoursePars({
-              men: pm,
-              women: pw || pm
-            });
-            setCourseYards({
-              men: ym,
-              women: yw || ym
-            });
-            setStrokeIndex(siClean);
-          } catch (err){
-            console.error('Course lookup error', err);
-            applyFallback();
-          }
-        }
-
-        // ---------------------------
         // Load shared events from Supabase Storage
-        // ---------------------------
         async function refreshShared(c) {
           c = c || client;
           if (!c) return;
@@ -662,9 +648,7 @@
             }));
         }
 
-        // ---------------------------
         // Load event from Supabase
-        // ---------------------------
         async function loadShared(item) {
           if (!client) return;
           const r = await client.storage.from(BUCKET).download(item.path);
@@ -681,16 +665,24 @@
           setSelectedPlayer(ps[0]?.name || '');
 
           setEventName(item.name);
-
-          await applyCourseFromDb(item.name, parsed);
+          setCoursePars({
+            men: parsed.parsMen || COURSE_DEFAULT_MEN,
+            women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
+          });
+          setCourseYards({
+            men: parsed.yardsMen || COURSE_YARDS_MEN,
+            women: parsed.yardsWomen || COURSE_YARDS_WOMEN
+          });
+          setCourseStrokeIndex({
+            men: parsed.strokeIndexMen || COURSE_STROKE_INDEX,
+            women: parsed.strokeIndexWomen || parsed.strokeIndexMen || COURSE_STROKE_INDEX
+          });
 
           setView('event');
           toast("Event loaded");
         }
 
-        // ---------------------------
         // Load season table from Supabase
-        // ---------------------------
         async function fetchSeason(c) {
           c = c || client;
           if (!c) return;
@@ -728,10 +720,8 @@
           setSeason(map);
         }
 
-        // ---------------------------
         // Import CSV (local)
-        // ---------------------------
-        async function importLocalCSV(text, filename) {
+        function importLocalCSV(text, filename) {
           const parsed = parseSquabbitCSV(text);
           const ps = parsed.players || [];
 
@@ -739,14 +729,23 @@
           setSelectedPlayer(ps[0]?.name || "");
           setEventName((filename || "").replace(/\.[^.]+$/, ""));
 
-          await applyCourseFromDb(filename, parsed);
+          setCoursePars({
+            men: parsed.parsMen || COURSE_DEFAULT_MEN,
+            women: parsed.parsWomen || parsed.parsMen || COURSE_DEFAULT_WOMEN
+          });
+          setCourseYards({
+            men: parsed.yardsMen || COURSE_YARDS_MEN,
+            women: parsed.yardsWomen || COURSE_YARDS_WOMEN
+          });
+          setCourseStrokeIndex({
+            men: parsed.strokeIndexMen || COURSE_STROKE_INDEX,
+            women: parsed.strokeIndexWomen || parsed.strokeIndexMen || COURSE_STROKE_INDEX
+          });
 
           setView('event');
         }
 
-        // ---------------------------
         // Countback helper
-        // ---------------------------
         function compareByCountback(a,b){
           const pa=a.perHole||[];
           const pb=b.perHole||[];
@@ -768,9 +767,7 @@
           return 0;
         }
 
-        // ---------------------------
         // Compute event leaderboard
-        // ---------------------------
         const computed = useMemo(() => {
           if (!players.length) return [];
 
@@ -797,7 +794,7 @@
           }
 
           const topGroup = groups[0]?.map(i=>rows.find(r=>r.idx===i)) || [];
-          let best=topGroup.length ? [topGroup[0]] : [];
+          let best=topGroup.length? [topGroup[0]] : [];
           for(let k=1;k<topGroup.length;k++){
             const cmp=compareByCountback(topGroup[k],best[0]);
             if(cmp>0) best=[topGroup[k]];
@@ -835,9 +832,7 @@
           return out.sort((a,b)=>a.position-b.position);
         }, [players]);
 
-        // ---------------------------
         // Season: Add event
-        // ---------------------------
         async function addEventToSeason() {
           if (!computed.length) { toast("Load an event first"); return; }
           const next = { ...season };
@@ -893,9 +888,7 @@
           }
         }
 
-        // ---------------------------
-        // Season: Remove event (rollback)
-        // ---------------------------
+        // Season: Remove event
         async function removeEventFromSeason() {
           if (!computed.length) { toast("Load an event first"); return; }
           if (!window.confirm("Remove this event from the season standings?")) return;
@@ -945,9 +938,7 @@
           }
         }
 
-        // ---------------------------
-        // Season: Reset Entire Table
-        // ---------------------------
+        // Season: clear
         async function clearSeason() {
           if (!client) { toast("No client"); return; }
           if (!window.confirm("⚠ This will delete ALL season standings. Continue?")) return;
@@ -961,8 +952,9 @@
         }
 
         // ----------------------------------------------------
-        // Header
+        // Components
         // ----------------------------------------------------
+
         function Header({ eventName, statusMsg }) {
           return (
             <header className="hide-print rounded-2xl p-4 border border-squab-700 bg-squab-600 text-white shadow">
@@ -981,9 +973,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Event Navigation Bar
-        // ----------------------------------------------------
         function EventNav({ setView }) {
           return (
             <nav className="flex flex-wrap gap-2 mb-4">
@@ -997,9 +986,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Home Menu
-        // ----------------------------------------------------
         function Home({ setView, fileInputRef, importLocalCSV, computed, addEventToSeason, removeEventFromSeason, clearSeason }) {
           const canAct = computed.length > 0;
           const [open, setOpen] = useState(true);
@@ -1068,7 +1054,7 @@
                       const f = e.target.files?.[0];
                       if (!f) return;
                       const text = await f.text();
-                      await importLocalCSV(text, f.name);
+                      importLocalCSV(text, f.name);
                       e.target.value = '';
                     }}
                   />
@@ -1108,14 +1094,11 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Past Events (Supabase)
-        // ----------------------------------------------------
         function PastEvents({ sharedGroups, loadShared, setView }) {
           return (
             <section className="rounded-2xl p-3 md:p-4 bg-white border border-squab-200 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-squab-900">Past Den Society Events</h2>
+                <h2 className="text-lg font-semibold text-squab-900">Past Den Events</h2>
                 <button className="btn border border-squab-200" onClick={() => setView('home')}>Back</button>
               </div>
 
@@ -1146,9 +1129,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Event Screen
-        // ----------------------------------------------------
         function EventScreen({ computed, setView }) {
           return (
             <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
@@ -1197,9 +1177,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Player Ratings Screen
-        // ----------------------------------------------------
         function Ratings({ computed, coursePars, setView }) {
           const menPars = coursePars.men;
           const womenPars = coursePars.women;
@@ -1304,9 +1281,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Season Standings
-        // ----------------------------------------------------
         function Standings({ season, setView }) {
           const list = Object.values(season)
             .filter(r => !isTeamLike(r.name))
@@ -1351,9 +1325,6 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Eclectic Leaderboard
-        // ----------------------------------------------------
         function Eclectic({ season, setView }) {
           const list = Object.values(season)
             .filter(r => !isTeamLike(r.name))
@@ -1394,16 +1365,14 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Player Hole Analysis
-        // ----------------------------------------------------
         function HoleAnalysis({
           computed,
           selectedPlayer,
           setSelectedPlayer,
           coursePars,
           courseYards,
-          strokeIndex,
+          strokeIndexMen,
+          strokeIndexWomen,
           setView
         }) {
           if (!computed.length) {
@@ -1422,20 +1391,16 @@
           const pars = coursePars[player.gender === "F" ? "women" : "men"];
           const yards = courseYards[player.gender === "F" ? "women" : "men"];
 
+          const siMenArr = strokeIndexMen || [];
+          const siWomenArr = strokeIndexWomen || siMenArr;
+          const siArr = player.gender === "F" ? siWomenArr : siMenArr;
+
+          // Field averages
           const fieldAvg = Array(18).fill(0);
           for (let h = 0; h < 18; h++) {
             const vals = computed.map((p) => Number(p.perHole[h]) || 0);
             fieldAvg[h] = vals.reduce((a, b) => a + b, 0) / vals.length;
           }
-
-          const holeType = (h) => {
-            const par = pars[h];
-            const yd = yards[h];
-            if (par === 3) return "Par 3";
-            if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
-            if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
-            return "Unknown";
-          };
 
           const gains = perHole.map((p, i) => p - fieldAvg[i]);
           const totalGain = gains.reduce((a, b) => a + b, 0);
@@ -1448,19 +1413,24 @@
             .map((g, i) => ({ hole: i + 1, g }))
             .sort((a, b) => a.g - b.g)[0];
 
-          const par3 = [];
-          const par4 = [];
-          const par5 = [];
-
+          const par3 = [], par4 = [], par5 = [];
           for (let i = 0; i < 18; i++) {
             if (pars[i] === 3) par3.push(perHole[i]);
             if (pars[i] === 4) par4.push(perHole[i]);
             if (pars[i] === 5) par5.push(perHole[i]);
           }
+          const avgP3 = par3.reduce((a, b) => a + b, 0) / (par3.length || 1);
+          const avgP4 = par4.reduce((a, b) => a + b, 0) / (par4.length || 1);
+          const avgP5 = par5.reduce((a, b) => a + b, 0) / (par5.length || 1);
 
-          const avgP3 = par3.reduce((a, b) => a + b, 0) / par3.length;
-          const avgP4 = par4.reduce((a, b) => a + b, 0) / par4.length;
-          const avgP5 = par5.reduce((a, b) => a + b, 0) / par5.length;
+          const holeType = (h) => {
+            const par = pars[h];
+            const yd = yards[h];
+            if (par === 3) return "Par 3";
+            if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
+            if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
+            return "Unknown";
+          };
 
           return (
             <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
@@ -1540,7 +1510,7 @@
                         <td>{i + 1}</td>
                         <td>{pars[i]}</td>
                         <td>{yards[i]}</td>
-                        <td>{strokeIndex[i]}</td>
+                        <td>{siArr[i]}</td>
                         <td className="font-semibold">{pts}</td>
                         <td>{to1(fieldAvg[i])}</td>
                         <td
@@ -1562,9 +1532,7 @@
           );
         }
 
-        // ----------------------------------------------------
-        // Main App return
-        // ----------------------------------------------------
+        // Main app render
         return (
           <div className="min-h-screen p-4 sm:p-6">
             <div className="max-w-5xl mx-auto space-y-4">
@@ -1612,7 +1580,8 @@
                   setSelectedPlayer={setSelectedPlayer}
                   coursePars={coursePars}
                   courseYards={courseYards}
-                  strokeIndex={strokeIndex}
+                  strokeIndexMen={courseStrokeIndex.men}
+                  strokeIndexWomen={courseStrokeIndex.women}
                   setView={setView}
                 />
               )}
@@ -1633,11 +1602,9 @@
             </div>
           </div>
         );
-      } // end of App()
+      }
 
-      // ----------------------------------------------------
       // Mount React App
-      // ----------------------------------------------------
       ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
