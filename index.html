@@ -421,15 +421,29 @@
         const yardsMen = holesMen.map((h) => h.yards || 0);
         const siMen = holesMen.map((h) => h.si || 0);
 
-        const hasWomenData = idxWomYards >= 0 && holesWom.some((h) => h.yards > 0);
-        const parsWomen = hasWomenData ? holesWom.map((h) => h.par || 0) : parsMen.slice();
-        const yardsWomen = hasWomenData ? holesWom.map((h) => h.yards || 0) : yardsMen.slice();
-        const siWomen = hasWomenData ? holesWom.map((h) => h.si || 0) : siMen.slice();
-
         const tees = [
-          { teeName: "Men", gender: "M", pars: parsMen, yards: yardsMen, si: siMen },
-          { teeName: "Women", gender: "F", pars: parsWomen, yards: yardsWomen, si: siWomen }
+          { teeName: "Men", gender: "M", pars: parsMen, yards: yardsMen, si: siMen }
         ];
+
+        const hasWomenData =
+          idxWomYards >= 0 &&
+          idxWomPar >= 0 &&
+          idxWomSI >= 0 &&
+          holesWom.some((h) => h.par > 0 || h.yards > 0 || h.si > 0);
+
+        if (hasWomenData) {
+          const parsWomen = holesWom.map((h) => h.par || 0);
+          const yardsWomen = holesWom.map((h) => h.yards || 0);
+          const siWomen = holesWom.map((h) => h.si || 0);
+
+          tees.push({
+            teeName: "Women",
+            gender: "F",
+            pars: parsWomen,
+            yards: yardsWomen,
+            si: siWomen
+          });
+        }
 
         return { courseName: "", tees };
       }
@@ -485,8 +499,8 @@
         let t = courseTees.find((tt) => (tt.gender || "M").toUpperCase() === gender);
         if (t) return t;
 
-        // 4) fallback to first tee (still CSV-defined)
-        return courseTees[0];
+        // 4) no match – be strict, no default tee
+        return null;
       }
 
       // -----------------------
@@ -1489,12 +1503,12 @@
           const eventParAverages = (perHole, pars) => {
             const sums = { 3: { s: 0, c: 0 }, 4: { s: 0, c: 0 }, 5: { s: 0, c: 0 } };
             for (let i = 0; i < 18; i++) {
+              const par = pars[i];
+              if (!par || !sums[par]) continue; // no default par; skip if missing/invalid
+
               const pts = Number(perHole[i]) || 0;
-              const par = pars[i] || 4;
-              if (sums[par]) {
-                sums[par].s += pts;
-                sums[par].c++;
-              }
+              sums[par].s += pts;
+              sums[par].c++;
             }
             const avg = (t) => (sums[t].c ? sums[t].s / sums[t].c : 0);
             return {
@@ -1774,6 +1788,9 @@
           const holeType = (h) => {
             const par = pars[h];
             const yd = yards[h];
+
+            if (!par) return "Unknown";
+
             if (par === 3) return "Par 3";
             if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
             if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
@@ -1879,8 +1896,8 @@
                       <tr key={i} className="border-b">
                         <td>{i + 1}</td>
                         <td>{pars[i]}</td>
-                        <td>{yards[i]}</td>
-                        <td>{siArr[i]}</td>
+                        <td>{yards[i] > 0 ? yards[i] : "—"}</td>
+                        <td>{siArr[i] > 0 ? siArr[i] : "—"}</td>
                         <td className="font-semibold">{pts}</td>
                         <td>{to1(fieldAvg[i])}</td>
                         <td
@@ -1978,3 +1995,4 @@
     </script>
   </body>
 </html>
+
