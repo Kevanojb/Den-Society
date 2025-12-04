@@ -1760,7 +1760,7 @@
         // -----------------------
         // UPDATED HoleAnalysis
         // -----------------------
-       function HoleAnalysis({
+      function HoleAnalysis({
   computed,
   selectedPlayer,
   setSelectedPlayer,
@@ -1820,7 +1820,7 @@
   computed.forEach((p) => {
     const hcap = Math.round(p.startExact ?? p.handicap ?? 0);
     const bucket = rangeForHcap(hcap);
-    const use = sums[bucket] ? bucket : "29-36"; // fallback
+    const use = sums[bucket] ? bucket : "29-36"; // fallback to highest band
     for (let i = 0; i < 18; i++) {
       const v = Number(p.perHole[i]) || 0;
       sums[use][i] += v;
@@ -1830,9 +1830,7 @@
 
   const groupAvg = {};
   groups.forEach((g) => {
-    groupAvg[g] = sums[g].map((v, i) =>
-      counts[g][i] ? v / counts[g][i] : NaN
-    );
+    groupAvg[g] = sums[g].map((v, i) => (counts[g][i] ? v / counts[g][i] : NaN));
   });
 
   const playerHcap = Math.round(player.startExact ?? player.handicap ?? 0);
@@ -1842,12 +1840,12 @@
     analysisMode === "field" ? fieldAvg : groupAvg[playerGroup] || fieldAvg;
 
   const refName =
-    analysisMode === "field" ? "Field" : `${playerGroup} Hcap Group`;
+    analysisMode === "field" ? "Whole Field" : `${playerGroup} Handicap Group`;
 
   const refColHeader =
     analysisMode === "field" ? "Field Avg" : `${playerGroup} Avg`;
 
-  // --- Gains ---
+  // --- Gains vs chosen reference ---
   const gains = perHole.map((pts, i) => {
     const base = Number(refArray[i]);
     const ref = Number.isFinite(base) ? base : fieldAvg[i];
@@ -1864,7 +1862,7 @@
     .map((g, i) => ({ hole: i + 1, g }))
     .sort((a, b) => a.g - b.g)[0];
 
-  // --- Par stats ---
+  // --- Par stats & ratings (same logic as Ratings view) ---
   const p3 = [];
   const p4 = [];
   const p5 = [];
@@ -1877,6 +1875,28 @@
   const avgP3 = p3.length ? p3.reduce((a, b) => a + b, 0) / p3.length : 0;
   const avgP4 = p4.length ? p4.reduce((a, b) => a + b, 0) / p4.length : 0;
   const avgP5 = p5.length ? p5.reduce((a, b) => a + b, 0) / p5.length : 0;
+
+  const ratingLabel = (avg) =>
+    avg >= 3
+      ? "Excellent"
+      : avg >= 2.5
+      ? "Good"
+      : avg >= 2
+      ? "Solid"
+      : avg >= 1.5
+      ? "Needs Work"
+      : "Struggle";
+
+  const badgeClass = (avg) =>
+    avg >= 3
+      ? "bg-emerald-100 text-emerald-800"
+      : avg >= 2.5
+      ? "bg-emerald-50 text-emerald-700"
+      : avg >= 2
+      ? "bg-neutral-100 text-neutral-800"
+      : avg >= 1.5
+      ? "bg-amber-100 text-amber-800"
+      : "bg-red-100 text-red-800";
 
   const holeType = (i) => {
     const par = pars[i];
@@ -1904,33 +1924,50 @@
             </span>
           </p>
           <p className="text-[11px] text-neutral-500">
-            Comparing against:{" "}
-            <span className="font-semibold">{refName}</span>
+            Currently comparing this round against{" "}
+            <span className="font-semibold">{refName}</span>.
           </p>
         </div>
 
-        {/* Toggle */}
-        <div className="inline-flex items-center rounded-full border border-squab-300 bg-squab-50 text-xs overflow-hidden">
-          <button
-            className={`px-3 py-1 ${
-              analysisMode === "field"
-                ? "bg-squab-600 text-white"
-                : "text-squab-800"
-            }`}
-            onClick={() => setAnalysisMode("field")}
-          >
-            vs Field
-          </button>
-          <button
-            className={`px-3 py-1 ${
-              analysisMode === "handicap"
-                ? "bg-squab-600 text-white"
-                : "text-squab-800"
-            }`}
-            onClick={() => setAnalysisMode("handicap")}
-          >
-            vs Hcap Group
-          </button>
+        {/* Clear comparison mode toggle */}
+        <div className="flex flex-col items-end gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+            Comparison mode
+          </span>
+          <div className="inline-flex items-stretch rounded-full border border-squab-300 bg-squab-50 text-xs overflow-hidden">
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-left min-w-[120px] ${
+                analysisMode === "field"
+                  ? "bg-squab-600 text-white"
+                  : "text-squab-800"
+              }`}
+              onClick={() => setAnalysisMode("field")}
+            >
+              <div className="text-[11px] font-semibold leading-tight">
+                Whole Field
+              </div>
+              <div className="text-[10px] opacity-80">
+                Compare to all players
+              </div>
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-left min-w-[140px] border-l border-squab-300 ${
+                analysisMode === "handicap"
+                  ? "bg-squab-600 text-white"
+                  : "text-squab-800"
+              }`}
+              onClick={() => setAnalysisMode("handicap")}
+            >
+              <div className="text-[11px] font-semibold leading-tight">
+                Handicap Group
+              </div>
+              <div className="text-[10px] opacity-80">
+                Compare to {playerGroup} players
+              </div>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1953,35 +1990,76 @@
             Total Gain vs {refName}
           </div>
           <div className="text-xl font-bold">{to1(totalGain)}</div>
+          <div className="text-[11px] text-neutral-500 mt-0.5">
+            Positive = better than comparison group
+          </div>
         </div>
 
         <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
           <div className="text-xs text-neutral-600">Best Hole</div>
           <div className="text-xl font-bold">
-            Hole {bestHole.hole} ({to1(bestHole.g)} pts)
+            Hole {bestHole.hole} ({to1(bestHole.g)} pts vs group)
           </div>
         </div>
 
         <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
           <div className="text-xs text-neutral-600">Worst Hole</div>
           <div className="text-xl font-bold">
-            Hole {worstHole.hole} ({to1(worstHole.g)} pts)
+            Hole {worstHole.hole} ({to1(worstHole.g)} pts vs group)
           </div>
         </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
         <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-3 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP3)}</div>
+          <div className="text-xs text-neutral-600 mb-1">Par-3 Performance</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xl font-semibold">{to1(avgP3)}</div>
+            <span
+              className={`px-2 py-0.5 rounded-lg text-[11px] ${badgeClass(
+                avgP3
+              )}`}
+            >
+              {ratingLabel(avgP3)}
+            </span>
+          </div>
+          <div className="text-[11px] text-neutral-500 mt-0.5">
+            Avg Stableford per Par 3
+          </div>
         </div>
+
         <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-4 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP4)}</div>
+          <div className="text-xs text-neutral-600 mb-1">Par-4 Performance</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xl font-semibold">{to1(avgP4)}</div>
+            <span
+              className={`px-2 py-0.5 rounded-lg text-[11px] ${badgeClass(
+                avgP4
+              )}`}
+            >
+              {ratingLabel(avgP4)}
+            </span>
+          </div>
+          <div className="text-[11px] text-neutral-500 mt-0.5">
+            Avg Stableford per Par 4
+          </div>
         </div>
+
         <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-5 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP5)}</div>
+          <div className="text-xs text-neutral-600 mb-1">Par-5 Performance</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xl font-semibold">{to1(avgP5)}</div>
+            <span
+              className={`px-2 py-0.5 rounded-lg text-[11px] ${badgeClass(
+                avgP5
+              )}`}
+            >
+              {ratingLabel(avgP5)}
+            </span>
+          </div>
+          <div className="text-[11px] text-neutral-500 mt-0.5">
+            Avg Stableford per Par 5
+          </div>
         </div>
       </div>
 
@@ -2086,6 +2164,6 @@ return (
   </div>
 );
 
-} // <-- this closes function App()
+} // end function App
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
