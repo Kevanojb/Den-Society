@@ -1760,325 +1760,274 @@
         // -----------------------
         // UPDATED HoleAnalysis
         // -----------------------
-       function HoleAnalysis({
-  computed,
-  selectedPlayer,
-  setSelectedPlayer,
-  courseTees,
-  setView,
-}) {
-  const [analysisMode, setAnalysisMode] = useState("field"); // "field" | "handicap"
+        function HoleAnalysis({
+          computed,
+          selectedPlayer,
+          setSelectedPlayer,
+          courseTees,
+          setView,
+        }) {
+          if (!computed.length) {
+            return (
+              <section className="rounded-2xl p-4 bg-white border border-squab-200 shadow-sm">
+                <EventNav setView={setView} />
+                <p className="text-neutral-600">
+                  Load an event to see hole analysis.
+                </p>
+              </section>
+            );
+          }
 
-  if (!computed.length) {
-    return (
-      <section className="rounded-2xl p-4 bg-white border border-squab-200 shadow-sm">
-        <EventNav setView={setView} />
-        <p className="text-neutral-600">Load an event to see hole analysis.</p>
-      </section>
-    );
-  }
+          const playerNames = computed.map((p) => p.name);
+          const player =
+            computed.find((p) => p.name === selectedPlayer) || computed[0];
 
-  const playerNames = computed.map((p) => p.name);
-  const player = computed.find((p) => p.name === selectedPlayer) || computed[0];
+          const tee = chooseTeeForPlayer(player, courseTees);
+          if (!tee) {
+            return (
+              <section className="rounded-2xl p-4 bg-white border border-squab-200 shadow-sm">
+                <EventNav setView={setView} />
+                <p className="text-neutral-600">
+                  No tee layout found in CourseLayout for this player. Check the
+                  CSV tee names and player tee labels.
+                </p>
+              </section>
+            );
+          }
 
-  const tee = chooseTeeForPlayer(player, courseTees);
-  if (!tee) {
-    return (
-      <section className="rounded-2xl p-4 bg-white border border-squab-200 shadow-sm">
-        <EventNav setView={setView} />
-        <p className="text-neutral-600">
-          No tee layout found in CourseLayout for this player. Check the CSV tee
-          names and player tee labels.
-        </p>
-      </section>
-    );
-  }
+          const perHole = player.perHole || Array(18).fill(0);
+          const pars = tee.pars;
+          const yards = tee.yards;
+          const siArr = tee.si;
 
-  const perHole = player.perHole || Array(18).fill(0);
-  const pars = tee.pars;
-  const yards = tee.yards;
-  const siArr = tee.si;
+          const fieldAvg = Array(18).fill(0);
+          for (let h = 0; h < 18; h++) {
+            const vals = computed.map((p) => Number(p.perHole[h]) || 0);
+            fieldAvg[h] =
+              vals.reduce((a, b) => a + b, 0) / Math.max(vals.length, 1);
+          }
 
-  // --- Field averages ---
-  const fieldAvg = Array(18).fill(0);
-  for (let h = 0; h < 18; h++) {
-    const vals = computed.map((p) => Number(p.perHole[h]) || 0);
-    fieldAvg[h] = vals.reduce((a, b) => a + b, 0) / Math.max(vals.length, 1);
-  }
+          const gains = perHole.map((p, i) => p - fieldAvg[i]);
+          const totalGain = gains.reduce((a, b) => a + b, 0);
 
-  // --- Handicap-group averages ---
-  const groups = ["0-9", "10-18", "19-28", "29-36"];
-  const makeBlank = () => Array(18).fill(0);
+          const bestHole = gains
+            .map((g, i) => ({ hole: i + 1, g }))
+            .sort((a, b) => b.g - a.g)[0];
 
-  const sums = {}, counts = {};
-  groups.forEach((g) => {
-    sums[g] = makeBlank();
-    counts[g] = makeBlank();
-  });
+          const worstHole = gains
+            .map((g, i) => ({ hole: i + 1, g }))
+            .sort((a, b) => a.g - b.g)[0];
 
-  computed.forEach((p) => {
-    const hcap = Math.round(p.startExact ?? p.handicap ?? 0);
-    const bucket = rangeForHcap(hcap);
-    const use = sums[bucket] ? bucket : "29-36";
-    for (let i = 0; i < 18; i++) {
-      const v = Number(p.perHole[i]) || 0;
-      sums[use][i] += v;
-      counts[use][i] += 1;
-    }
-  });
+          const par3 = [];
+          const par4 = [];
+          const par5 = [];
+          for (let i = 0; i < 18; i++) {
+            if (pars[i] === 3) par3.push(perHole[i]);
+            if (pars[i] === 4) par4.push(perHole[i]);
+            if (pars[i] === 5) par5.push(perHole[i]);
+          }
+          const avgP3 = par3.length
+            ? par3.reduce((a, b) => a + b, 0) / par3.length
+            : 0;
+          const avgP4 = par4.length
+            ? par4.reduce((a, b) => a + b, 0) / par4.length
+            : 0;
+          const avgP5 = par5.length
+            ? par5.reduce((a, b) => a + b, 0) / par5.length
+            : 0;
 
-  const groupAvg = {};
-  groups.forEach((g) => {
-    groupAvg[g] = sums[g].map((v, i) =>
-      counts[g][i] ? v / counts[g][i] : NaN
-    );
-  });
+          const holeType = (idx) => {
+            const par = pars[idx];
+            const yd = yards[idx];
 
-  const playerHcap = Math.round(player.startExact ?? player.handicap ?? 0);
-  const playerGroup = rangeForHcap(playerHcap);
+            if (!par) return "Unknown";
 
-  const refArray =
-    analysisMode === "field" ? fieldAvg : groupAvg[playerGroup] || fieldAvg;
+            if (par === 3) return "Par 3";
+            if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
+            if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
+            return "Unknown";
+          };
 
-  const refName =
-    analysisMode === "field" ? "Field" : `${playerGroup} Hcap Group`;
+          return (
+            <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
+              <EventNav setView={setView} />
 
-  const refColHeader =
-    analysisMode === "field" ? "Field Avg" : `${playerGroup} Avg`;
+              <h2 className="text-lg font-semibold text-squab-900 mb-1">
+                Player Hole Analysis
+              </h2>
+              <p className="text-xs text-neutral-600 mb-3">
+                Tee for this player:{" "}
+                <span className="font-semibold">
+                  {player.teeLabel || tee.teeName || "Unknown"}
+                </span>
+              </p>
 
-  // --- Gains ---
-  const gains = perHole.map((pts, i) => {
-    const base = Number(refArray[i]);
-    const ref = Number.isFinite(base) ? base : fieldAvg[i];
-    return (Number(pts) || 0) - (Number(ref) || 0);
-  });
-
-  const totalGain = gains.reduce((a, b) => a + b, 0);
-
-  const bestHole = gains
-    .map((g, i) => ({ hole: i + 1, g }))
-    .sort((a, b) => b.g - a.g)[0];
-
-  const worstHole = gains
-    .map((g, i) => ({ hole: i + 1, g }))
-    .sort((a, b) => a.g - b.g)[0];
-
-  // --- Par stats ---
-  const p3 = [], p4 = [], p5 = [];
-  for (let i = 0; i < 18; i++) {
-    if (pars[i] === 3) p3.push(perHole[i]);
-    if (pars[i] === 4) p4.push(perHole[i]);
-    if (pars[i] === 5) p5.push(perHole[i]);
-  }
-
-  const avgP3 = p3.length ? p3.reduce((a, b) => a + b, 0) / p3.length : 0;
-  const avgP4 = p4.length ? p4.reduce((a, b) => a + b, 0) / p4.length : 0;
-  const avgP5 = p5.length ? p5.reduce((a, b) => a + b, 0) / p5.length : 0;
-
-  const holeType = (i) => {
-    const par = pars[i];
-    const yd = yards[i];
-    if (!par) return "Unknown";
-    if (par === 3) return "Par 3";
-    if (par === 4) return yd >= 400 ? "Long Par 4" : "Par 4";
-    if (par === 5) return yd >= 520 ? "Long Par 5" : "Par 5";
-    return "Unknown";
-  };
-
-  return (
-    <section className="rounded-2xl p-4 md:p-6 bg-white border border-squab-200 shadow-sm">
-      <EventNav setView={setView} />
-
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-        <div>
-          <h2 className="text-lg font-semibold text-squab-900 mb-1">
-            Player Hole Analysis
-          </h2>
-          <p className="text-xs text-neutral-600 mb-1">
-            Tee for this player:{" "}
-            <span className="font-semibold">
-              {player.teeLabel || tee.teeName || "Unknown"}
-            </span>
-          </p>
-          <p className="text-[11px] text-neutral-500">
-            Comparing against:{" "}
-            <span className="font-semibold">{refName}</span>
-          </p>
-        </div>
-
-        {/* Toggle */}
-        <div className="inline-flex items-center rounded-full border border-squab-300 bg-squab-50 text-xs overflow-hidden">
-          <button
-            className={`px-3 py-1 ${
-              analysisMode === "field"
-                ? "bg-squab-600 text-white"
-                : "text-squab-800"
-            }`}
-            onClick={() => setAnalysisMode("field")}
-          >
-            vs Field
-          </button>
-          <button
-            className={`px-3 py-1 ${
-              analysisMode === "handicap"
-                ? "bg-squab-600 text-white"
-                : "text-squab-800"
-            }`}
-            onClick={() => setAnalysisMode("handicap")}
-          >
-            vs Hcap Group
-          </button>
-        </div>
-      </div>
-
-      <div className="mb-4">
-        <label className="block text-sm font-medium mb-1">Select Player</label>
-        <select
-          className="w-full max-w-xs rounded-xl border border-squab-200 px-3 py-2 bg-white"
-          value={selectedPlayer}
-          onChange={(e) => setSelectedPlayer(e.target.value)}
-        >
-          {playerNames.map((name) => (
-            <option key={name}>{name}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="grid md:grid-cols-3 gap-4 mb-5">
-        <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
-          <div className="text-xs text-neutral-600">Total Gain vs {refName}</div>
-          <div className="text-xl font-bold">{to1(totalGain)}</div>
-        </div>
-
-        <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
-          <div className="text-xs text-neutral-600">Best Hole</div>
-          <div className="text-xl font-bold">
-            Hole {bestHole.hole} ({to1(bestHole.g)} pts)
-          </div>
-        </div>
-
-        <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
-          <div className="text-xs text-neutral-600">Worst Hole</div>
-          <div className="text-xl font-bold">
-            Hole {worstHole.hole} ({to1(worstHole.g)} pts)
-          </div>
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-3 gap-4 mb-6">
-        <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-3 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP3)}</div>
-        </div>
-        <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-4 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP4)}</div>
-        </div>
-        <div className="p-3 bg-white border border-squab-200 rounded-xl">
-          <div className="text-xs text-neutral-600">Avg Par-5 Score</div>
-          <div className="text-xl font-semibold">{to1(avgP5)}</div>
-        </div>
-      </div>
-
-      <div className="overflow-auto">
-        <table className="min-w-full text-xs md:text-sm">
-          <thead>
-            <tr className="border-b border-squab-200 bg-squab-50 text-left">
-              <th>Hole</th>
-              <th>Par</th>
-              <th>Yards</th>
-              <th>SI</th>
-              <th>Pts</th>
-              <th>{refColHeader}</th>
-              <th>Gain</th>
-              <th>Type</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {perHole.map((pts, i) => (
-              <tr key={i} className="border-b">
-                <td>{i + 1}</td>
-                <td>{pars[i]}</td>
-                <td>{yards[i] || "—"}</td>
-                <td>{siArr[i] || "—"}</td>
-                <td className="font-semibold">{pts}</td>
-                <td>{to1(refArray[i])}</td>
-                <td
-                  className={
-                    gains[i] >= 0
-                      ? "text-emerald-600 font-semibold"
-                      : "text-red-600 font-semibold"
-                  }
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-1">
+                  Select Player
+                </label>
+                <select
+                  className="w-full max-w-xs rounded-xl border border-squab-200 px-3 py-2 bg-white"
+                  value={player.name}
+                  onChange={(e) => setSelectedPlayer(e.target.value)}
                 >
-                  {to1(gains[i])}
-                </td>
-                <td>{holeType(i)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
+                  {playerNames.map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
 
-return (
-  <div className="min-h-screen p-4 sm:p-6">
-    <div className="max-w-5xl mx-auto space-y-4">
-      <Header
-        eventName={eventName}
-        statusMsg={statusMsg}
-        courseName={courseName}
-      />
+              <div className="grid md:grid-cols-3 gap-4 mb-5">
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">
+                    Total Gain vs Field
+                  </div>
+                  <div className="text-xl font-bold">{to1(totalGain)}</div>
+                </div>
 
-      {view === "home" && (
-        <Home
-          setView={setView}
-          fileInputRef={fileInputRef}
-          importLocalCSV={importLocalCSV}
-          computed={computed}
-          addEventToSeason={addEventToSeason}
-          removeEventFromSeason={removeEventFromSeason}
-          clearSeason={clearSeason}
-        />
-      )}
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">Best Hole</div>
+                  <div className="text-xl font-bold">
+                    Hole {bestHole.hole} ({to1(bestHole.g)} pts vs field)
+                  </div>
+                </div>
 
-      {view === "past" && (
-        <PastEvents
-          sharedGroups={sharedGroups}
-          loadShared={loadShared}
-          setView={setView}
-        />
-      )}
+                <div className="p-3 border border-squab-200 rounded-xl bg-squab-50">
+                  <div className="text-xs text-neutral-600">Worst Hole</div>
+                  <div className="text-xl font-bold">
+                    Hole {worstHole.hole} ({to1(worstHole.g)} pts vs field)
+                  </div>
+                </div>
+              </div>
 
-      {view === "event" && (
-        <EventScreen computed={computed} setView={setView} />
-      )}
+              <div className="grid md:grid-cols-3 gap-4 mb-6">
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">
+                    Avg Par-3 Score
+                  </div>
+                  <div className="text-xl font-semibold">{to1(avgP3)}</div>
+                </div>
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">
+                    Avg Par-4 Score
+                  </div>
+                  <div className="text-xl font-semibold">{to1(avgP4)}</div>
+                </div>
+                <div className="p-3 bg-white border border-squab-200 rounded-xl">
+                  <div className="text-xs text-neutral-600">
+                    Avg Par-5 Score
+                  </div>
+                  <div className="text-xl font-semibold">{to1(avgP5)}</div>
+                </div>
+              </div>
 
-      {view === "ratings" && (
-        <Ratings computed={computed} courseTees={courseTees} setView={setView} />
-      )}
+              <div className="overflow-auto">
+                <table className="min-w-full text-xs md:text-sm">
+                  <thead>
+                    <tr className="border-b border-squab-200 bg-squab-50 text-left">
+                      <th>Hole</th>
+                      <th>Par</th>
+                      <th>Yards</th>
+                      <th>SI</th>
+                      <th>Pts</th>
+                      <th>Field Avg</th>
+                      <th>Gain</th>
+                      <th>Type</th>
+                    </tr>
+                  </thead>
 
-      {view === "holes" && (
-        <HoleAnalysis
-          computed={computed}
-          selectedPlayer={selectedPlayer}
-          setSelectedPlayer={setSelectedPlayer}
-          courseTees={courseTees}
-          setView={setView}
-        />
-      )}
+                  <tbody>
+                    {perHole.map((pts, i) => (
+                      <tr key={i} className="border-b">
+                        <td>{i + 1}</td>
+                        <td>{pars[i]}</td>
+                        <td>{yards[i] > 0 ? yards[i] : "—"}</td>
+                        <td>{siArr[i] > 0 ? siArr[i] : "—"}</td>
+                        <td className="font-semibold">{pts}</td>
+                        <td>{to1(fieldAvg[i])}</td>
+                        <td
+                          className={
+                            gains[i] >= 0
+                              ? "text-emerald-600 font-semibold"
+                              : "text-red-600 font-semibold"
+                          }
+                        >
+                          {to1(gains[i])}
+                        </td>
+                        <td>{holeType(i)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        }
 
-      {view === "standings" && (
-        <Standings season={season} setView={setView} />
-      )}
+        return (
+          <div className="min-h-screen p-4 sm:p-6">
+            <div className="max-w-5xl mx-auto space-y-4">
+              <Header
+                eventName={eventName}
+                statusMsg={statusMsg}
+                courseName={courseName}
+              />
 
-      {view === "eclectic" && (
-        <Eclectic season={season} setView={setView} />
-      )}
-    </div>
-  </div>
-);
+              {view === "home" && (
+                <Home
+                  setView={setView}
+                  fileInputRef={fileInputRef}
+                  importLocalCSV={importLocalCSV}
+                  computed={computed}
+                  addEventToSeason={addEventToSeason}
+                  removeEventFromSeason={removeEventFromSeason}
+                  clearSeason={clearSeason}
+                />
+              )}
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+              {view === "past" && (
+                <PastEvents
+                  sharedGroups={sharedGroups}
+                  loadShared={loadShared}
+                  setView={setView}
+                />
+              )}
+
+              {view === "event" && (
+                <EventScreen computed={computed} setView={setView} />
+              )}
+
+              {view === "ratings" && (
+                <Ratings
+                  computed={computed}
+                  courseTees={courseTees}
+                  setView={setView}
+                />
+              )}
+
+              {view === "holes" && (
+                <HoleAnalysis
+                  computed={computed}
+                  selectedPlayer={selectedPlayer}
+                  setSelectedPlayer={setSelectedPlayer}
+                  courseTees={courseTees}
+                  setView={setView}
+                />
+              )}
+
+              {view === "standings" && (
+                <Standings season={season} setView={setView} />
+              )}
+
+              {view === "eclectic" && (
+                <Eclectic season={season} setView={setView} />
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
